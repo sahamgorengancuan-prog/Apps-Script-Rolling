@@ -1,7 +1,7 @@
 'use strict';
 /** Uji skala besar dan kasus tepi yang terlihat pada log produksi. */
 const { FakeSpreadsheet, Environment, METRICS } = require('./gas_stubs');
-const { buildWorld, loadScript, drainTriggers } = require('./world');
+const { buildWorld, loadScript, drainTriggers, MANIFEST_SHEET } = require('./world');
 
 let PASS = 0; const FAIL = [];
 function ok(n, c, x) { if (c) { PASS++; console.log('  ok   ' + n); } else { FAIL.push(n + (x ? ' :: ' + x : '')); console.log('  FAIL ' + n + (x ? ' :: ' + x : '')); } }
@@ -16,9 +16,8 @@ const HEADER = ['Sales Office', 'Delivering Plant', 'Customer ID', 'Relationship
 section('S1. FILE 50.000 BARIS (setara STA Marunda 49.968 baris)');
 {
   const world = buildWorld({ dbPadding: 0 });
-  const sandbox = loadScript(world.env);
-  sandbox.PropertiesService.getScriptProperties().setProperty('RSC_PERIOD_START', '2026-08-01');
-
+  const sandbox = loadScript(world.env, { dbId: world.db.getId() });
+  
   const N = 50000;
   const rows = [HEADER.slice()];
   const days = ['M', 'T', 'W', 'TH', 'F', 'S'];
@@ -37,7 +36,7 @@ section('S1. FILE 50.000 BARIS (setara STA Marunda 49.968 baris)');
   const masters = {
     office: { available: true, map: { '2BA0': { code: '2BA0', desc: 'STA Kranggan Hub' } } },
     relationship: { available: true, map: { ZWS003: 'a', ZWS004: 'b', ZWS006: 'c', ZWS013: 'd' } },
-    periodStart: '2026-08-01', idx: {}
+    dateNew: '2026-08-01', dateClose: '2026-07-31', idx: {}
   };
   const t0 = Date.now();
   const res = sandbox.rscValidateValues_(spec, rows.slice(1), masters);
@@ -53,12 +52,12 @@ section('S1. FILE 50.000 BARIS (setara STA Marunda 49.968 baris)');
 section('S2. KONFLIK MASIF -> PESAN TETAP RINGKAS');
 {
   const world = buildWorld({ dbPadding: 0 });
-  const sandbox = loadScript(world.env);
+  const sandbox = loadScript(world.env, { dbId: world.db.getId() });
   const spec = sandbox.rscPrimarySpec_();
   const masters = {
     office: { available: true, map: { '2BA0': { code: '2BA0' } } },
     relationship: { available: true, map: { ZWS003: 'a' } },
-    periodStart: '2026-08-01', idx: {}
+    dateNew: '2026-08-01', dateClose: '2026-07-31', idx: {}
   };
   // 3.000 baris: customer+salesman sama, schedule berbeda-beda -> R7 meledak
   const rows = [];
@@ -83,12 +82,12 @@ section('S2. KONFLIK MASIF -> PESAN TETAP RINGKAS');
 section('S3. SEL TANGGAL ASLI (Date), ANGKA, DAN BOOLEAN');
 {
   const world = buildWorld({ dbPadding: 0 });
-  const sandbox = loadScript(world.env);
+  const sandbox = loadScript(world.env, { dbId: world.db.getId() });
   const spec = sandbox.rscPrimarySpec_();
   const masters = {
     office: { available: true, map: { '2BA0': { code: '2BA0' } } },
     relationship: { available: true, map: { ZWS003: 'a' } },
-    periodStart: '2026-08-01', idx: {}
+    dateNew: '2026-08-01', dateClose: '2026-07-31', idx: {}
   };
   const row = ['2BA0', '2BA0', 110094788, 'ZWS003 - Sales Rep. Food', 'S091010486', 'ZD01',
     new Date(2026, 7, 1), new Date(9999, 11, 31), 'F2', '03', 'W1W,W3W',
@@ -116,9 +115,9 @@ section('S4. LINK =HYPERLINK PADA KOLOM E');
   rekap.getRange(5, 1).setValue('2AA0');
   rekap.getRange(5, 2).setValue('STA Bogor');
   rekap.getRange(5, 5).setValue('=HYPERLINK("https://docs.google.com/spreadsheets/d/' + targetId + '/edit","Buka Template")');
-  const sandbox = loadScript(world.env);
-  const start = sandbox.rscStartBulkValidation();
-  const rows = world.master.getSheetByName('_RSC_MANIFEST_V29')
+  const sandbox = loadScript(world.env, { dbId: world.db.getId() });
+  const start = sandbox.RSC_STANDARD_BULK_START_20260814();
+  const rows = world.master.getSheetByName(MANIFEST_SHEET)
     .getRange(2, 1, 80, 26).getDisplayValues().filter(r => r[1]);
   ok('link dalam formula HYPERLINK tetap dikenali', rows.some(r => r[1] === targetId),
      'tidak menemukan ' + targetId);
@@ -128,7 +127,7 @@ section('S4. LINK =HYPERLINK PADA KOLOM E');
 section('S5. FILE TANPA SHEET DIKENALI / SHEET KOSONG');
 {
   const world = buildWorld({ dbPadding: 0 });
-  const sandbox = loadScript(world.env);
+  const sandbox = loadScript(world.env, { dbId: world.db.getId() });
   const empty = new FakeSpreadsheet(world.fileIds[0].id + 'X', 'Template Kosong');
   empty.addSheet('Sheet1', [['a', 'b']]);
   world.env.addFile(empty);
@@ -153,15 +152,15 @@ section('S5. FILE TANPA SHEET DIKENALI / SHEET KOSONG');
 section('S6. LOCK GLOBAL SIBUK -> DEFER, BUKAN GAGAL');
 {
   const world = buildWorld({ dbPadding: 0 });
-  const sandbox = loadScript(world.env);
-  sandbox.rscStartBulkValidation();
+  const sandbox = loadScript(world.env, { dbId: world.db.getId() });
+  sandbox.RSC_STANDARD_BULK_START_20260814();
   world.env.lockBusy = true;
   let kind = null;
-  try { sandbox.rscClaimBatch_(world.master, sandbox.rscGetProp_('RSC_RUN_ID', ''), 'WORKER_1', 4); }
+  try { sandbox.rscClaimBatch_(world.master, sandbox.rscGetProp_('RSC_STD_V27_RUN_ID', ''), 'WORKER_1', 4); }
   catch (e) { kind = sandbox.rscClassify_(e).kind; }
   eq('lock global sibuk diklasifikasi INFRA', kind, 'INFRA');
   world.env.lockBusy = false;
-  const got = sandbox.rscClaimBatch_(world.master, sandbox.rscGetProp_('RSC_RUN_ID', ''), 'WORKER_1', 4);
+  const got = sandbox.rscClaimBatch_(world.master, sandbox.rscGetProp_('RSC_STD_V27_RUN_ID', ''), 'WORKER_1', 4);
   eq('setelah lock bebas, claim berhasil', got.length, 4);
 }
 
@@ -169,15 +168,14 @@ section('S6. LOCK GLOBAL SIBUK -> DEFER, BUKAN GAGAL');
 section('S7. LANE MENGHORMATI BATAS WAKTU EKSEKUSI');
 {
   const world = buildWorld({ dbPadding: 0 });
-  const sandbox = loadScript(world.env);
-  sandbox.PropertiesService.getScriptProperties().setProperty('RSC_PERIOD_START', '2026-08-01');
-  sandbox.rscStartBulkValidation();
+  const sandbox = loadScript(world.env, { dbId: world.db.getId() });
+  sandbox.RSC_STANDARD_BULK_START_20260814();
   // Percepat deadline agar lane menyerah setelah 1 file.
-  sandbox.RSC_CFG.RUN.SOFT_DEADLINE_MS = 1;
-  const r = sandbox.rscWorker1();
+  sandbox.RSC_STANDARD_VALIDATION_V27_20260814.workerSoftDeadlineMs = 1;
+  const r = sandbox.RSC_STANDARD_BULK_WORKER_1_20260814();
   ok('lane berhenti sebelum kuota habis', r.claimed >= 1 && r.committed < r.claimed,
      JSON.stringify({ claimed: r.claimed, committed: r.committed }));
-  const rows = world.master.getSheetByName('_RSC_MANIFEST_V29').getRange(2, 1, 70, 26).getDisplayValues();
+  const rows = world.master.getSheetByName(MANIFEST_SHEET).getRange(2, 1, 70, 26).getDisplayValues();
   const released = rows.filter(x => /tanpa penalti/.test(x[14]));
   ok('task yang belum dikerjakan dikembalikan tanpa penalti', released.length > 0, 'n=' + released.length);
   eq('task yang dilepas tidak menambah Attempts', released.filter(x => Number(x[6] || 0) > 0).length, 0);

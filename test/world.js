@@ -83,35 +83,33 @@ function buildWorld(opts) {
     if (sid) salesIds.add(sid);
   });
 
-  const db = new FakeSpreadsheet('DB_MASTER_ID', 'MDM Master Database', { isDb: true });
+  const db = new FakeSpreadsheet(opts.dbId || 'DB_MASTER_ID', 'MDM Master Database', { isDb: true });
   const bpRows = [['Customer ID', 'Sales Office', 'Sales Organization', 'Name']];
   Array.from(custIds).forEach(c => bpRows.push([c, offByCust.get(c) || '', 'STA1', 'Cust ' + c]));
   // padding untuk membuktikan lookup tetap O(1) pada master besar
   for (let i = 0; i < (opts.dbPadding === undefined ? 3000 : opts.dbPadding); i++) {
     bpRows.push(['9' + String(100000000 + i), '2AA0', 'STA1', 'Filler ' + i]);
   }
-  db.addSheet('m_bp_general', bpRows);
+  db.addSheet('m_bp_general_view', bpRows.map((r, i) =>
+    i === 0 ? ['bp_id', 'sls_office', 'sls_org', 'bp_name', 'bp_type_id'] : r.concat(['ZD01'])));
 
-  const smRows = [['Salesman ID', 'Sales Office', 'Salesman BP Type', 'Valid To']];
-  Array.from(salesIds).forEach(s => smRows.push([s, '', 'ZD01', '9999-12-31']));
-  db.addSheet('m_salesman', smRows);
+  // m_sales_info memakai header CSV asli dan tanggal epoch milidetik.
+  const smRows = [['id', 'sls_org', 'sls_office', 'salesman_id', 'salesman_name',
+    'sales_type', 'coverage', 'valid_from', 'valid_to']];
+  Array.from(salesIds).forEach((s, i) => smRows.push(
+    [String(20000 + i), 'STA1', '', s, 'Salesman ' + i, '11', 'DK', '1772323200000', '253402214400000']));
+  db.addSheet('m_sales_info', smRows);
 
-  const relRows = [['Customer ID', 'Relationship', 'Salesman ID', 'Valid From', 'Valid To']];
+  // m_bp_relation memakai COMPACT_JSON tanpa header, baris pertama berisi URL.
+  const relRows = [['https://docs.google.com/spreadsheets/d/' + db.getId() + '/edit?gid=1379118174']];
+  (opts.relationRows || []).forEach(r => relRows.push([JSON.stringify(r)]));
   db.addSheet('m_bp_relation', relRows);
 
-  const vsRows = [['Customer ID', 'Salesman ID', 'Schedule Visit', 'Visit Category', 'Valid To']];
+  const vsRows = [['cust_id', 'salesman_id', 'visit_schedule', 'visit_category', 'visit_valid_to']];
   rollingData.forEach(r => {
     if (String(r[13]).trim() === 'Toko Bangkrut') vsRows.push([r[2], r[4], r[10], r[8], '9999-12-31']);
   });
   db.addSheet('m_visit_schedule', vsRows);
-
-  const rtRows = [['Relationship', 'Description']];
-  ['ZWS003:Sales Rep. Food', 'ZWS004:Sales Rep. Non-Food', 'ZWS005:Sales Rep. Frozen',
-   'ZWS006:Sales Rep. Cosmetic', 'ZWS007:Sales Rep. Reguler', 'ZWS011:Superior',
-   'ZWS012:Collector Food', 'ZWS013:Collector Non-Food', 'ZWS014:Collector Frozen',
-   'ZWS015:Collector Cosmetic', 'ZWS016:Collector Reguler', 'ZWS022:Collector Industrial Relation']
-    .forEach(p => { const [a, b] = p.split(':'); rtRows.push([a, b]); });
-  db.addSheet('m_relationship', rtRows);
 
   env.addFile(db);
 
@@ -119,21 +117,40 @@ function buildWorld(opts) {
 }
 
 /** Muat RollingSalesCenter.gs ke dalam konteks vm bersama stub. */
-function loadScript(env) {
+function loadScript(env, cfg) {
   const vm = require('vm');
   const src = fs.readFileSync(path.join(__dirname, '..', 'RollingSalesCenter.gs'), 'utf8');
   const sandbox = buildGlobals(env);
   vm.createContext(sandbox);
   vm.runInContext(src, sandbox, { filename: 'RollingSalesCenter.gs' });
+  cfg = cfg || {};
+  // DB dan tanggal dikonfigurasi lewat konstanta di file .gs, bukan properties.
+  sandbox.RSC_DB_PARAMETERS.spreadsheetId = cfg.dbId === undefined ? 'DB_MASTER_ID' : cfg.dbId;
+  sandbox.RSC_DB_PARAMETERS.extraSpreadsheetIds = cfg.extraDbIds || [];
+  sandbox.VALIDATE_DATE_IN_TEMPLATE_PARAMETERS.dateNew = cfg.dateNew || '2026-08-01';
+  sandbox.VALIDATE_DATE_IN_TEMPLATE_PARAMETERS.dateClose = cfg.dateClose || '2026-07-31';
+  sandbox.PropertiesService.getScriptProperties()
+    .setProperty('ROLLING_SALES_CENTER_MASTER_SPREADSHEET_ID', env.activeId);
   return sandbox;
 }
+
+const WORKER_HANDLERS = [
+  'RSC_STANDARD_BULK_WORKER_1_20260814',
+  'RSC_STANDARD_BULK_WORKER_2_20260814',
+  'RSC_STANDARD_BULK_WORKER_3_20260814',
+  'RSC_STANDARD_BULK_WORKER_4_20260814'
+];
+const PREWARM_HANDLER = 'RSC_PERF19_PREWARM_DB_INDEXES_20260819';
+const WATCHDOG_HANDLER = 'RSC_STANDARD_BULK_WATCHDOG_20260814';
+const MANIFEST_SHEET = '_RSC_VALIDATION_MANIFEST_V27';
 
 /** Jalankan trigger worker sampai antrean selesai atau batas iterasi tercapai. */
 function drainTriggers(env, sandbox, maxIter) {
   let iter = 0;
   const log = [];
   while (iter < (maxIter || 500)) {
-    const t = env.triggers.find(x => /^(rscWorker\d|rscPrewarmIndexes)$/.test(x.fn));
+    const t = env.triggers.find(x =>
+      WORKER_HANDLERS.indexOf(x.fn) >= 0 || x.fn === PREWARM_HANDLER);
     if (!t) break;
     env.triggers.splice(env.triggers.indexOf(t), 1);
     iter++;
@@ -145,4 +162,7 @@ function drainTriggers(env, sandbox, maxIter) {
   return { iterations: iter, log };
 }
 
-module.exports = { buildWorld, loadScript, drainTriggers, METRICS, ROLLING_SHEET, ROLLING_HEADER };
+module.exports = {
+  buildWorld, loadScript, drainTriggers, METRICS, ROLLING_SHEET, ROLLING_HEADER,
+  WORKER_HANDLERS, PREWARM_HANDLER, WATCHDOG_HANDLER, MANIFEST_SHEET
+};

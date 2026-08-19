@@ -15,6 +15,14 @@ const METRICS = {
   setValuesCalls: 0
 };
 
+/** ID Google Drive asli panjangnya 40+ karakter; stub harus setia. */
+function fakeDriveId() {
+  const abc = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-';
+  let s = '1';
+  for (let i = 0; i < 43; i++) s += abc[Math.floor(Math.random() * abc.length)];
+  return s;
+}
+
 function colLetter(n) { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 
 class FakeRange {
@@ -68,6 +76,12 @@ class FakeRange {
     return this._read().map(r => r.map(v => (typeof v === 'string' && v.charAt(0) === '=') ? v : ''));
   }
   setDataValidation() { return this; }
+  setBackground() { return this; }
+  setBackgrounds() { return this; }
+  setFontColor() { return this; }
+  setFontWeight() { return this; }
+  setNumberFormat() { return this; }
+  clear() { return this.clearContent(); }
   setNote() { return this; }
   getA1Notation() { return colLetter(this.col) + this.row; }
 }
@@ -93,6 +107,9 @@ class FakeSheet {
     this._lastRow = lr; this._lastCol = lc;
   }
   getName() { return this.name; }
+  setName(n) { this.name = n; return this; }
+  getSheetId() { if (this._id === undefined) this._id = Math.floor(Math.random() * 1e9); return this._id; }
+  setFrozenColumns(n) { this.frozenCols = n; return this; }
   getLastRow() { return this._lastRow; }
   getLastColumn() { return this._lastCol; }
   getMaxRows() { return Math.max(this.data.length, this._lastRow); }
@@ -131,9 +148,12 @@ class FakeSpreadsheet {
   getSheets() { return this.sheets.slice(); }
   getSheetByName(n) { return this.sheets.find(s => s.getName() === n) || null; }
   insertSheet(n) { return this.addSheet(n, []); }
+  getActiveSheet() { return this._active || this.sheets[0]; }
+  setActiveSheet(s) { this._active = s; return s; }
+  getUrl() { return 'https://docs.google.com/spreadsheets/d/' + this.id + '/edit'; }
+  getProtections() { return []; }
+  toast() { return this; }
   deleteSheet(sh) { const i = this.sheets.indexOf(sh); if (i >= 0) this.sheets.splice(i, 1); return this; }
-  getActiveSheet() { return this.sheets[0]; }
-  setActiveSheet(s) { return s; }
 }
 
 class Environment {
@@ -191,7 +211,7 @@ function buildGlobals(env) {
       return b;
     },
     create(name) {
-      const id = 'CREATED_' + Math.random().toString(36).slice(2, 12);
+      const id = fakeDriveId();
       const ss = new FakeSpreadsheet(id, name);
       ss.addSheet('Sheet1', []);
       env.addFile(ss);
@@ -258,10 +278,25 @@ function buildGlobals(env) {
   };
 
   g.DriveApp = {
+    Access: { DOMAIN_WITH_LINK: 'DOMAIN_WITH_LINK' },
+    Permission: { EDIT: 'EDIT' },
+    getRootFolder() { return { getName: () => 'My Drive' }; },
     getFileById(id) {
       const f = env.files.get(id);
       if (!f) throw new Error('No item with the given ID could be found: ' + id);
-      return { getLastUpdated: () => f.lastUpdated, getName: () => f.getName() };
+      return {
+        getLastUpdated: () => f.lastUpdated,
+        getName: () => f.getName(),
+        setTrashed: () => { env.files.delete(id); return true; },
+        setSharing: () => true,
+        makeCopy(name) {
+          const nid = fakeDriveId();
+          const ns = new FakeSpreadsheet(nid, name);
+          f.getSheets().forEach(sh => ns.addSheet(sh.getName(), sh.data));
+          env.addFile(ns);
+          return { getId: () => nid, getName: () => name };
+        }
+      };
     }
   };
 
