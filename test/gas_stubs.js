@@ -131,7 +131,9 @@ class FakeSpreadsheet {
   getSheets() { return this.sheets.slice(); }
   getSheetByName(n) { return this.sheets.find(s => s.getName() === n) || null; }
   insertSheet(n) { return this.addSheet(n, []); }
+  deleteSheet(sh) { const i = this.sheets.indexOf(sh); if (i >= 0) this.sheets.splice(i, 1); return this; }
   getActiveSheet() { return this.sheets[0]; }
+  setActiveSheet(s) { return s; }
 }
 
 class Environment {
@@ -147,6 +149,8 @@ class Environment {
     this.clockOffsetMs = 0;      // jam virtual: memajukan waktu tanpa sleep nyata
   }
   advance(ms) { this.clockOffsetMs += ms; return this.clockOffsetMs; }
+  /** Kunci jam virtual ke tanggal tertentu agar uji tidak bergantung wall-clock. */
+  setClock(iso) { this.clockOffsetMs = Date.parse(iso) - Date.now(); return this.clockOffsetMs; }
   addFile(ss) { this.files.set(ss.getId(), ss); return ss; }
   setActive(id) { this.activeId = id; }
 }
@@ -185,6 +189,13 @@ function buildGlobals(env) {
         build() { return {}; }
       };
       return b;
+    },
+    create(name) {
+      const id = 'CREATED_' + Math.random().toString(36).slice(2, 12);
+      const ss = new FakeSpreadsheet(id, name);
+      ss.addSheet('Sheet1', []);
+      env.addFile(ss);
+      return ss;
     },
     getUi() { throw new Error('No UI in headless context'); }
   };

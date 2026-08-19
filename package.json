@@ -4,6 +4,6 @@
   "private": true,
   "description": "Integrated validation engine untuk Rolling Sales Center (Google Apps Script)",
   "scripts": {
-    "test": "node test/e2e.test.js && node test/scale.test.js"
+    "test": "node test/e2e.test.js && node test/scale.test.js && node test/db.test.js"
   }
 }

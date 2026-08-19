@@ -133,7 +133,7 @@ function drainTriggers(env, sandbox, maxIter) {
   let iter = 0;
   const log = [];
   while (iter < (maxIter || 500)) {
-    const t = env.triggers.find(x => /^rscWorker\d$/.test(x.fn));
+    const t = env.triggers.find(x => /^(rscWorker\d|rscPrewarmIndexes)$/.test(x.fn));
     if (!t) break;
     env.triggers.splice(env.triggers.indexOf(t), 1);
     iter++;

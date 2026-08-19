@@ -47,7 +47,9 @@ let e2e = null;
   eq('task unik dari kolom E', start.stats.tasks, fileIds.length);
   ok('link terbaca >= task', start.stats.links >= start.stats.tasks, 'links=' + start.stats.links);
   ok('link tidak valid ditandai SKIPPED', start.stats.skipped >= 1, 'skipped=' + start.stats.skipped);
-  eq('4 lane dijadwalkan', start.armed, 4);
+  eq('index prewarm dijadwalkan lebih dulu', start.prewarm, 'true');
+  eq('lane belum dinyalakan sebelum index siap', start.armed, 0);
+  eq('trigger prewarm terpasang', env.triggers.filter(t => t.fn === 'rscPrewarmIndexes').length, 1);
 
   const drain = drainTriggers(env, sandbox, 400);
   const stats = sandbox.rscQueueStats_(master, start.runId);
@@ -59,6 +61,29 @@ let e2e = null;
   ok('ada file COMPLETE_OK', stats.ok > 0, 'ok=' + stats.ok);
   ok('ada file COMPLETE_WITH_ERRORS', stats.withErrors > 0, 'withErrors=' + stats.withErrors);
   eq('progress 100%', stats.progress, 1);
+}
+
+/* ======================================================================= */
+section('2b. PREWARM INDEX BERJALAN DI EKSEKUSI TERPISAH');
+{
+  const world = buildWorld({ dbPadding: 500 });
+  const sandbox = loadScript(world.env);
+  sandbox.PropertiesService.getScriptProperties().setProperty('RSC_DB_SPREADSHEET_ID', world.db.getId());
+  const start = sandbox.rscStartBulkValidation();
+  eq('hanya trigger prewarm yang antre', world.env.triggers.filter(t => /rscWorker/.test(t.fn)).length, 0);
+
+  const METRICS = require('./gas_stubs').METRICS;
+  const before = METRICS.dbRangeReads;
+  const pre = sandbox.rscPrewarmIndexes();
+  ok('prewarm membangun index dari sumber', METRICS.dbRangeReads > before);
+  ok('laporan menyebut tiap tabel', pre.report.length >= 4, JSON.stringify(pre.report));
+  ok('tidak ada tabel tertunda', pre.pending.length === 0, JSON.stringify(pre.pending));
+  eq('4 lane dinyalakan setelah index siap', world.env.triggers.filter(t => /rscWorker/.test(t.fn)).length, 4);
+
+  // Lane berikutnya tidak boleh membaca sumber DB lagi.
+  const beforeLane = METRICS.dbRangeReads;
+  sandbox.rscWorker1();
+  eq('lane memakai index yang sudah jadi', METRICS.dbRangeReads - beforeLane, 0);
 }
 
 /* ======================================================================= */

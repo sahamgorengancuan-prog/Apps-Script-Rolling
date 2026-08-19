@@ -98,7 +98,10 @@ var RSC_CFG = {
     BUILD_LEASE_MS: 300000,
     WAIT_MS: 25000,             // tunggu builder lain, lalu defer (bukan gagal)
     WAIT_STEP_MS: 2500,
-    READ_WINDOW_ROWS: 20000
+    READ_WINDOW_ROWS: 20000,
+    CACHE_MAX_BYTES: 5000000,     // di atas ini, snapshot ditulis ke sheet index
+    SHEET_WRITE_ROWS: 5000,       // ukuran blok saat materialisasi index
+    SHEET_READ_ROWS: 50000
   },
 
   /* --- dashboard --- */
@@ -129,22 +132,92 @@ var RSC_CFG = {
     RUN_ID: 'RSC_RUN_ID',
     RUN_STATE: 'RSC_RUN_STATE',
     DB_ID: 'RSC_DB_SPREADSHEET_ID',
+    DB_ID_EXTRA: 'RSC_DB_EXTRA_IDS',   // dipisah koma; mis. spreadsheet m_bp_relation
     OWNER: 'RSC_BINDING_OWNER',
     BLOCKED: 'RSC_BLOCKED_REASON',
     INDEX_VER: 'RSC_INDEX_VER:',
+    INDEX_STORE: 'RSC_INDEX_STORE_ID',
     LEASE: 'RSC_LEASE:',
     DASH_LAST: 'RSC_DASH_LAST_WRITE',
     PERIOD: 'RSC_PERIOD_START'
   },
 
-  /* --- master eksternal (opsional). Bila kosong, rule DB-dependent di-SKIP,
-         BUKAN dijadikan HARD_ERROR seperti perilaku PERF19 lama. --- */
+  /* --- sumber DB eksternal (opsional, boleh lebih dari satu spreadsheet).
+         Bila tidak dikonfigurasi, rule DB-dependent di-SKIP, BUKAN dijadikan
+         HARD_ERROR seperti perilaku PERF19 lama. --- */
   DB_TABLES: {
-    BP_GENERAL:    { sheets: ['m_bp_general', '_rsc_bp_general_lookup', 'bp_general'],   keyCols: ['Customer ID', 'BP Number', 'BP Number Source'], valCols: ['Sales Office', 'Sales Organization', 'Name'] },
-    BP_RELATION:   { sheets: ['m_bp_relation', 'bp_relation'],                            keyCols: ['Customer ID', 'BP Number'], valCols: ['Relationship', 'Salesman ID', 'Valid From', 'Valid To'] },
-    VISIT_SCHEDULE:{ sheets: ['m_visit_schedule', 'visit_schedule'],                      keyCols: ['Customer ID', 'Salesman ID'], valCols: ['Schedule Visit', 'Visit Category', 'Valid To'] },
-    SALESMAN:      { sheets: ['m_salesman', 'salesman'],                                  keyCols: ['Salesman ID'], valCols: ['Sales Office', 'Salesman BP Type', 'Valid To'] },
-    RELATION_TYPE: { sheets: ['m_relationship', 'relationship'],                          keyCols: ['Relationship'], valCols: ['Description'] }
+    /* m_bp_relation berada di spreadsheet terpisah dan TANPA baris header:
+       baris pertama berisi URL, data mulai baris berikutnya dengan urutan
+       kolom tetap. Karena itu dipakai mode posisional. */
+    BP_RELATION: {
+      sheets: ['m_bp_relation', 'bp_relation', 'Database m_bp_relation'],
+      positional: ['Customer ID', 'Relationship', 'Salesman ID', 'Valid From', 'Valid To'],
+      keyCols: [['Customer ID', 'customer_id', 'bp_number', 'BP Number']],
+      valCols: [
+        { name: 'Relationship', aliases: ['Relationship', 'relationship', 'relation'] },
+        { name: 'Salesman ID', aliases: ['Salesman ID', 'salesman_id'] },
+        { name: 'Valid From', aliases: ['Valid From', 'valid_from'] },
+        { name: 'Valid To', aliases: ['Valid To', 'valid_to'] }
+      ],
+      keyPattern: '^[0-9]{6,12}$',
+      maxPerKey: 24,
+      // Baris yang masa berlakunya sudah lewat tidak diindeks. Ini yang membuat
+      // index tabel puluhan MB tetap ramping. Grace 60 hari disediakan agar
+      // rolling yang di-backdate sedikit tetap punya pembanding.
+      activeOnly: 'Valid To',
+      activeGraceDays: 60
+    },
+
+    /* m_sales_info memakai header CSV asli dan tanggal epoch milidetik. */
+    SALESMAN: {
+      sheets: ['m_sales_info', 'm_salesman', 'salesman', 'sales_info'],
+      keyCols: [['salesman_id', 'Salesman ID']],
+      valCols: [
+        { name: 'Sales Office', aliases: ['sls_office', 'Sales Office', 'sales_office'] },
+        { name: 'Sales Organization', aliases: ['sls_org', 'Sales Organization', 'sales_org'] },
+        { name: 'Sales Type', aliases: ['sales_type', 'Sales Type'] },
+        { name: 'Coverage', aliases: ['coverage', 'Coverage'] },
+        { name: 'Name', aliases: ['salesman_name', 'Name'] },
+        { name: 'Valid From', aliases: ['valid_from', 'Valid From'] },
+        { name: 'Valid To', aliases: ['valid_to', 'Valid To'] }
+      ],
+      keyPattern: '^[A-Za-z0-9]{6,15}$',
+      maxPerKey: 8
+    },
+
+    BP_GENERAL: {
+      sheets: ['m_bp_general', '_rsc_bp_general_lookup', 'bp_general', 'm_customer'],
+      keyCols: [['Customer ID', 'customer_id', 'bp_number', 'BP Number', 'BP Number Source']],
+      valCols: [
+        { name: 'Sales Office', aliases: ['sls_office', 'Sales Office', 'sales_office'] },
+        { name: 'Sales Organization', aliases: ['sls_org', 'Sales Organization', 'sales_org'] },
+        { name: 'Name', aliases: ['bp_name', 'name', 'Name', 'customer_name'] }
+      ],
+      keyPattern: '^[0-9]{6,12}$',
+      maxPerKey: 4
+    },
+
+    VISIT_SCHEDULE: {
+      sheets: ['m_visit_schedule', 'visit_schedule', 'm_schedule_visit', 'm_visit'],
+      keyCols: [
+        ['Customer ID', 'customer_id', 'bp_number', 'BP Number'],
+        ['Salesman ID', 'salesman_id']
+      ],
+      valCols: [
+        { name: 'Schedule Visit', aliases: ['schedule_visit', 'Schedule Visit', 'visit_schedule'] },
+        { name: 'Visit Category', aliases: ['visit_category', 'Visit Category'] },
+        { name: 'Valid From', aliases: ['valid_from', 'Valid From'] },
+        { name: 'Valid To', aliases: ['valid_to', 'Valid To'] }
+      ],
+      maxPerKey: 8
+    },
+
+    RELATION_TYPE: {
+      sheets: ['m_relationship', 'm_bp_relation_type', 'relationship'],
+      keyCols: [['Relationship', 'relationship', 'relation_id']],
+      valCols: [{ name: 'Description', aliases: ['Description', 'description', 'relation_desc'] }],
+      maxPerKey: 1
+    }
   },
 
   /* --- master bawaan (fallback bila DB eksternal tidak tersedia) --- */
@@ -215,9 +288,26 @@ function rscFileId_(v) {
   return '';
 }
 
+/**
+ * Varian longgar khusus nilai KONFIGURASI (Script Properties / prompt admin).
+ * Menerima URL maupun ID telanjang dengan panjang berapa pun, karena nilai ini
+ * diketik operator dan bukan hasil tempelan massal seperti kolom E.
+ * Parser kolom E sengaja tetap ketat agar teks seperti "TIDAK ADA ROLINGAN"
+ * tidak pernah berubah menjadi fileId palsu.
+ */
+function rscConfigId_(v) {
+  var s = rscText_(v);
+  if (!s) return '';
+  var strict = rscFileId_(s);
+  if (strict) return strict;
+  if (/^[A-Za-z0-9_-]+$/.test(s)) return s;
+  return '';
+}
+
 /** Tanggal -> 'YYYY-MM-DD'. Menerima Date, serial, atau string. */
 function rscDateStr_(v) {
   if (v === null || v === undefined || v === '') return '';
+  if (typeof v === 'number' && isFinite(v)) v = String(Math.round(v));
   if (Object.prototype.toString.call(v) === '[object Date]') {
     if (isNaN(v.getTime())) return '';
     return rscPad_(v.getFullYear(), 4) + '-' + rscPad_(v.getMonth() + 1, 2) + '-' + rscPad_(v.getDate(), 2);
@@ -229,8 +319,16 @@ function rscDateStr_(v) {
   m = s.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/);
   if (m) return m[3] + '-' + rscPad_(m[2], 2) + '-' + rscPad_(m[1], 2);
   if (/^\d+(\.\d+)?$/.test(s)) {
-    var d = new Date(Math.round((Number(s) - 25569) * 86400000));
-    if (!isNaN(d.getTime())) {
+    var num = Number(s);
+    var d;
+    if (num >= 1e11) {
+      // Epoch milidetik (dipakai DB master: 253402214400000 = 9999-12-31).
+      d = new Date(num);
+    } else if (num > 0 && num < 500000) {
+      // Serial tanggal gaya spreadsheet.
+      d = new Date(Math.round((num - 25569) * 86400000));
+    }
+    if (d && !isNaN(d.getTime())) {
       return rscPad_(d.getUTCFullYear(), 4) + '-' + rscPad_(d.getUTCMonth() + 1, 2) + '-' + rscPad_(d.getUTCDate(), 2);
     }
   }
@@ -544,41 +642,180 @@ function rscSnapRead_(name, ver) {
 
 var RSC_MEM_INDEX = {};   // cache tingkat-execution (paling cepat)
 
-function rscDbId_() { return rscGetProp_(RSC_CFG.PROP.DB_ID, ''); }
+/* --------------------------------------------------------------------------
+ * Penyimpanan index bertingkat.
+ *
+ * CacheService dibatasi ~100KB per entry dan kapasitas total yang tidak besar.
+ * Tabel seperti m_bp_relation (puluhan MB / ratusan ribu baris) menghasilkan
+ * snapshot yang jauh melewati batas itu, sehingga penulisan ke cache gagal dan
+ * SETIAP execution terpaksa membangun ulang index dari sumber — persis pola
+ * yang membuat versi lama macet.
+ *
+ * Karena itu snapshot besar dimaterialisasi ke spreadsheet index tersendiri
+ * (2 kolom: key + nilai terpaket). Membacanya jauh lebih murah daripada
+ * memindai sumber aslinya, dan hasilnya tetap dibagi ke semua execution.
+ * -------------------------------------------------------------------------- */
+
+/** Spreadsheet penampung index. Dibuat sekali, lalu dipakai ulang. */
+function rscIndexStore_(createIfMissing) {
+  var id = rscGetProp_(RSC_CFG.PROP.INDEX_STORE, '');
+  if (id) {
+    try { return SpreadsheetApp.openById(id); }
+    catch (e) { rscSetProp_(RSC_CFG.PROP.INDEX_STORE, ''); }
+  }
+  if (!createIfMissing) return null;
+  try {
+    var ss = SpreadsheetApp.create('_RSC_INDEX_CACHE (jangan dihapus)');
+    rscSetProp_(RSC_CFG.PROP.INDEX_STORE, ss.getId());
+    return ss;
+  } catch (e2) { return null; }
+}
+
+function rscIdxSheetName_(tableName) { return 'IDX_' + tableName; }
+
+/** Tulis index ke sheet: A1 = penanda versi, mulai baris 2 = [key, nilai JSON]. */
+function rscIdxSheetWrite_(tableName, ver, built) {
+  var ss = rscIndexStore_(true);
+  if (!ss) return { ok: false, reason: 'NO_STORE' };
+  var name = rscIdxSheetName_(tableName);
+  var sh = ss.getSheetByName(name);
+  try {
+    if (sh) ss.deleteSheet(sh);
+    sh = ss.insertSheet(name);
+  } catch (e) { return { ok: false, reason: String(e) }; }
+
+  var keys = Object.keys(built.map);
+  sh.getRange(1, 1, 1, 2).setValues([[
+    ver,
+    JSON.stringify({ rows: built.rows, sheet: built.sheet, source: built.source, mode: built.mode, keys: keys.length })
+  ]]);
+
+  var row = 2, i = 0;
+  var block = RSC_CFG.INDEX.SHEET_WRITE_ROWS;
+  while (i < keys.length) {
+    var n = Math.min(block, keys.length - i);
+    var out = [];
+    for (var k = 0; k < n; k++) {
+      out.push([keys[i + k], JSON.stringify(built.map[keys[i + k]])]);
+    }
+    sh.getRange(row, 1, n, 2).setValues(out);
+    row += n; i += n;
+  }
+  return { ok: true, keys: keys.length };
+}
+
+/** Baca index dari sheet bila penanda versinya cocok. */
+function rscIdxSheetRead_(tableName, ver) {
+  var ss = rscIndexStore_(false);
+  if (!ss) return null;
+  var sh = ss.getSheetByName(rscIdxSheetName_(tableName));
+  if (!sh) return null;
+  var head = sh.getRange(1, 1, 1, 2).getDisplayValues()[0];
+  if (rscText_(head[0]) !== ver) return null;                 // index basi
+  var meta = {};
+  try { meta = JSON.parse(head[1] || '{}'); } catch (e) { meta = {}; }
+
+  var last = sh.getLastRow();
+  var map = {}, row = 2;
+  var win = RSC_CFG.INDEX.SHEET_READ_ROWS;
+  while (row <= last) {
+    var n = Math.min(win, last - row + 1);
+    var vals = sh.getRange(row, 1, n, 2).getDisplayValues();
+    for (var r = 0; r < vals.length; r++) {
+      var key = vals[r][0];
+      if (!key) continue;
+      try { map[key] = JSON.parse(vals[r][1]); } catch (e2) { /* baris rusak dilewati */ }
+    }
+    row += n;
+  }
+  return {
+    available: true, map: map, rows: meta.rows || 0, sheet: meta.sheet || '',
+    source: meta.source || '', mode: meta.mode || '', storedIn: 'sheet'
+  };
+}
+
+/** Simpan snapshot: cache bila muat, selain itu materialisasi ke sheet index. */
+function rscIndexPersist_(tableName, ver, built) {
+  var json = JSON.stringify(built);
+  if (json.length <= RSC_CFG.INDEX.CACHE_MAX_BYTES) {
+    var w = rscSnapWrite_(tableName, ver, built);
+    if (w.ok) { built.storedIn = 'cache'; return built; }
+  }
+  var r = rscIdxSheetWrite_(tableName, ver, built);
+  built.storedIn = r.ok ? 'sheet' : 'memory-only';
+  built.persistNote = r.ok ? '' : ('gagal materialisasi index: ' + (r.reason || '-'));
+  return built;
+}
+
+/** Semua spreadsheet DB yang dikonfigurasi (utama + tambahan, dipisah koma). */
+function rscDbSources_() {
+  var out = [];
+  var main = rscConfigId_(rscGetProp_(RSC_CFG.PROP.DB_ID, ''));
+  if (main) out.push(main);
+  var extra = rscGetProp_(RSC_CFG.PROP.DB_ID_EXTRA, '');
+  if (extra) {
+    var parts = extra.split(/[,;\s]+/);
+    for (var i = 0; i < parts.length; i++) {
+      var id = rscConfigId_(parts[i]);
+      if (id && out.indexOf(id) < 0) out.push(id);
+    }
+  }
+  return out;
+}
+
+function rscDbId_() { var a = rscDbSources_(); return a.length ? a[0] : ''; }
 
 /** Versi index = sidik jari file DB. Berubah bila DB diperbarui. */
 function rscIndexVersion_() {
-  var id = rscDbId_();
-  if (!id) return 'nodb';
-  var cached = rscGetProp_(RSC_CFG.PROP.INDEX_VER + id, '');
-  var cachedAt = Number(rscGetProp_(RSC_CFG.PROP.INDEX_VER + id + ':at', '0'));
+  var ids = rscDbSources_();
+  if (!ids.length) return 'nodb';
+  var tag = ids.join(',');
+  var cached = rscGetProp_(RSC_CFG.PROP.INDEX_VER + tag, '');
+  var cachedAt = Number(rscGetProp_(RSC_CFG.PROP.INDEX_VER + tag + ':at', '0'));
   if (cached && (Date.now() - cachedAt) < 300000) return cached;   // stabil 5 menit
-  var ver;
-  try {
-    ver = 'v' + DriveApp.getFileById(id).getLastUpdated().getTime();
-  } catch (e) {
-    ver = 'v' + Math.floor(Date.now() / 3600000);                   // fallback per jam
+  var stamps = [];
+  for (var i = 0; i < ids.length; i++) {
+    try { stamps.push(DriveApp.getFileById(ids[i]).getLastUpdated().getTime()); }
+    catch (e) { stamps.push(Math.floor(Date.now() / 3600000)); }   // fallback per jam
   }
-  rscSetProp_(RSC_CFG.PROP.INDEX_VER + id, ver);
-  rscSetProp_(RSC_CFG.PROP.INDEX_VER + id + ':at', String(Date.now()));
+  var ver = 'v' + stamps.join('-');
+  rscSetProp_(RSC_CFG.PROP.INDEX_VER + tag, ver);
+  rscSetProp_(RSC_CFG.PROP.INDEX_VER + tag + ':at', String(Date.now()));
   return ver;
 }
 
-/** Cari sheet pertama yang cocok dari daftar alias (case/spasi-insensitif). */
+/**
+ * Cari sheet yang cocok dari daftar alias (case/spasi-insensitif).
+ *
+ * Pencocokan sengaja KETAT. Toleransi prefix hanya diberikan untuk kasus nyata
+ * "nama sheet terpotong 31 karakter" (batas nama tab pada file hasil ekspor
+ * xlsx). Tanpa batasan ini, alias pendek seperti "m_bp" akan menyambar tab
+ * "m_bp_relation", dan alias "m_bp_relation_type" akan menyambar tab
+ * "m_bp_relation" — keduanya membuat master terbaca dari tabel yang salah.
+ */
+var RSC_SHEET_NAME_LIMIT = 31;
+
 function rscFindSheet_(ss, aliases) {
   var sheets = ss.getSheets();
   var byKey = {};
-  for (var i = 0; i < sheets.length; i++) byKey[rscKey_(sheets[i].getName())] = sheets[i];
+  for (var i = 0; i < sheets.length; i++) {
+    var k = rscKey_(sheets[i].getName());
+    if (!(k in byKey)) byKey[k] = sheets[i];
+  }
+
+  // 1. kecocokan persis
   for (var a = 0; a < aliases.length; a++) {
     var hit = byKey[rscKey_(aliases[a])];
     if (hit) return hit;
   }
-  // toleransi prefix: nama sheet terpotong 31 karakter di file hasil ekspor.
+
+  // 2. hanya untuk nama tab yang terpotong batas 31 karakter
   for (var b = 0; b < aliases.length; b++) {
     var want = rscKey_(aliases[b]);
-    for (var k in byKey) {
-      if (!Object.prototype.hasOwnProperty.call(byKey, k)) continue;
-      if (k.indexOf(want) === 0 || want.indexOf(k) === 0) return byKey[k];
+    for (var key in byKey) {
+      if (!Object.prototype.hasOwnProperty.call(byKey, key)) continue;
+      var truncated = byKey[key].getName().length >= RSC_SHEET_NAME_LIMIT;
+      if (truncated && want.length > key.length && want.indexOf(key) === 0) return byKey[key];
     }
   }
   return null;
@@ -607,62 +844,144 @@ function rscPickCol_(hmap, candidates) {
  * Membaca bertahap per READ_WINDOW_ROWS baris agar aman untuk sheet besar,
  * dan hanya kolom yang dibutuhkan yang disalin ke dalam index.
  */
+/** Cari sheet tabel di seluruh spreadsheet DB yang dikonfigurasi. */
+function rscLocateTable_(spec) {
+  var ids = rscDbSources_();
+  for (var i = 0; i < ids.length; i++) {
+    var ss;
+    try { ss = SpreadsheetApp.openById(ids[i]); }
+    catch (e) {
+      var c = rscClassify_(e);
+      if (c.kind === RSC_ERR.INFRA) throw new RscInfraError('Gagal membuka spreadsheet DB: ' + c.message);
+      continue;                                  // sumber ini tidak terbaca, coba berikutnya
+    }
+    var sh = rscFindSheet_(ss, spec.sheets);
+    if (sh) return { sheet: sh, ssId: ids[i], ssName: ss.getName() };
+  }
+  return null;
+}
+
+/**
+ * Tentukan pemetaan kolom.
+ * Mode header : baris 1 adalah nama kolom (mis. m_sales_info).
+ * Mode posisional: baris 1 sudah berisi data atau catatan lain, sehingga urutan
+ *                  kolom diambil dari spec.positional (mis. m_bp_relation yang
+ *                  baris pertamanya berupa URL, bukan header).
+ */
+function rscResolveColumns_(spec, headerRow) {
+  var hmap = rscHeaderMap_(headerRow);
+  var keyIdx = [], ok = true;
+  for (var k = 0; k < spec.keyCols.length; k++) {
+    var ci = rscPickCol_(hmap, spec.keyCols[k]);
+    if (ci < 0) { ok = false; break; }
+    keyIdx.push(ci);
+  }
+  if (ok && keyIdx.length) {
+    var valIdx = [];
+    for (var v = 0; v < spec.valCols.length; v++) {
+      valIdx.push({ name: spec.valCols[v].name, idx: rscPickCol_(hmap, spec.valCols[v].aliases) });
+    }
+    return { mode: 'header', firstDataRow: 2, keyIdx: keyIdx, valIdx: valIdx };
+  }
+
+  if (!spec.positional) return null;
+
+  var pos = {};
+  for (var p = 0; p < spec.positional.length; p++) pos[rscKey_(spec.positional[p])] = p;
+  var pKey = [];
+  for (var kk = 0; kk < spec.keyCols.length; kk++) {
+    var found = -1;
+    for (var a = 0; a < spec.keyCols[kk].length; a++) {
+      var idx = pos[rscKey_(spec.keyCols[kk][a])];
+      if (idx !== undefined) { found = idx; break; }
+    }
+    if (found < 0) return null;
+    pKey.push(found);
+  }
+  var pVal = [];
+  for (var vv = 0; vv < spec.valCols.length; vv++) {
+    var fi = -1;
+    for (var b = 0; b < spec.valCols[vv].aliases.length; b++) {
+      var pi = pos[rscKey_(spec.valCols[vv].aliases[b])];
+      if (pi !== undefined) { fi = pi; break; }
+    }
+    pVal.push({ name: spec.valCols[vv].name, idx: fi });
+  }
+  return { mode: 'positional', firstDataRow: 1, keyIdx: pKey, valIdx: pVal };
+}
+
+/**
+ * Bangun index untuk satu tabel master.
+ * Dibaca bertahap per READ_WINDOW_ROWS baris agar aman untuk sheet puluhan MB,
+ * dan hanya kolom yang dibutuhkan yang disalin ke dalam index.
+ */
 function rscBuildIndex_(tableName) {
   var spec = RSC_CFG.DB_TABLES[tableName];
   if (!spec) throw new RscDataError('Tabel master tidak dikenal: ' + tableName);
-  var dbId = rscDbId_();
-  if (!dbId) return { available: false, reason: 'DB_NOT_CONFIGURED', map: {}, rows: 0 };
+  if (!rscDbSources_().length) return { available: false, reason: 'DB_NOT_CONFIGURED', map: {}, rows: 0 };
 
-  var ss;
-  try { ss = SpreadsheetApp.openById(dbId); }
-  catch (e) { throw new RscInfraError('Gagal membuka spreadsheet DB: ' + e); }
+  var loc = rscLocateTable_(spec);
+  if (!loc) return { available: false, reason: 'TABLE_NOT_FOUND', map: {}, rows: 0 };
 
-  var sh = rscFindSheet_(ss, spec.sheets);
-  if (!sh) return { available: false, reason: 'TABLE_NOT_FOUND', map: {}, rows: 0 };
-
+  var sh = loc.sheet;
   var lastRow = sh.getLastRow(), lastCol = sh.getLastColumn();
-  if (lastRow < 2) return { available: true, map: {}, rows: 0 };
+  if (lastRow < 1 || lastCol < 1) return { available: true, map: {}, rows: 0, sheet: sh.getName() };
 
-  var header = sh.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
-  var hmap = rscHeaderMap_(header);
-  var keyIdx = [];
-  for (var i = 0; i < spec.keyCols.length; i++) {
-    var ci = rscPickCol_(hmap, [spec.keyCols[i]]);
-    if (ci >= 0) keyIdx.push(ci);
+  var headerRow = sh.getRange(1, 1, 1, lastCol).getDisplayValues()[0];
+  var cols = rscResolveColumns_(spec, headerRow);
+  if (!cols) return { available: false, reason: 'KEY_COLUMN_MISSING', map: {}, rows: 0, sheet: sh.getName() };
+
+  var keyRe = spec.keyPattern ? new RegExp(spec.keyPattern) : null;
+  var maxPerKey = spec.maxPerKey || 8;
+  var map = {}, total = 0, skipped = 0, expired = 0;
+
+  // Untuk tabel besar, baris yang masa berlakunya sudah lewat tidak perlu
+  // diindeks: rule hanya memeriksa relasi yang masih aktif.
+  var activeIdx = -1;
+  var cutoff = '';
+  if (spec.activeOnly) {
+    for (var ai = 0; ai < cols.valIdx.length; ai++) {
+      if (cols.valIdx[ai].name === spec.activeOnly) { activeIdx = cols.valIdx[ai].idx; break; }
+    }
+    var grace = Number(spec.activeGraceDays || 0);
+    cutoff = rscDateStr_(new Date(Date.now() - grace * 86400000));
   }
-  if (!keyIdx.length) return { available: false, reason: 'KEY_COLUMN_MISSING', map: {}, rows: 0 };
-
-  var valIdx = [];
-  for (var v = 0; v < spec.valCols.length; v++) {
-    valIdx.push({ name: spec.valCols[v], idx: rscPickCol_(hmap, [spec.valCols[v]]) });
-  }
-
-  var map = {}, total = 0, row = 2;
+  var row = cols.firstDataRow;
   var win = RSC_CFG.INDEX.READ_WINDOW_ROWS;
+
   while (row <= lastRow) {
     var n = Math.min(win, lastRow - row + 1);
     var block = sh.getRange(row, 1, n, lastCol).getDisplayValues();
     for (var r = 0; r < block.length; r++) {
-      var parts = [];
-      var blank = true;
-      for (var kk = 0; kk < keyIdx.length; kk++) {
-        var kv = rscIdOnly_(block[r][keyIdx[kk]]);
+      var parts = [], blank = true, bad = false;
+      for (var kk = 0; kk < cols.keyIdx.length; kk++) {
+        var kv = rscIdOnly_(block[r][cols.keyIdx[kk]]);
         if (kv) blank = false;
+        if (kk === 0 && keyRe && kv && !keyRe.test(kv)) bad = true;
         parts.push(kv.toUpperCase());
       }
       if (blank) continue;
+      if (bad) { skipped++; continue; }      // baris URL/catatan pada sheet tanpa header
+      if (activeIdx >= 0) {
+        var vt = rscDateStr_(block[r][activeIdx]);
+        if (vt && vt < cutoff) { expired++; continue; }
+      }
       var key = parts.join('|');
       var rec = {};
-      for (var vv = 0; vv < valIdx.length; vv++) {
-        rec[valIdx[vv].name] = valIdx[vv].idx >= 0 ? rscText_(block[r][valIdx[vv].idx]) : '';
+      for (var vv = 0; vv < cols.valIdx.length; vv++) {
+        rec[cols.valIdx[vv].name] = cols.valIdx[vv].idx >= 0 ? rscText_(block[r][cols.valIdx[vv].idx]) : '';
       }
       if (!map[key]) map[key] = [];
-      if (map[key].length < 8) map[key].push(rec);   // batasi fan-out agar snapshot ramping
+      if (map[key].length < maxPerKey) map[key].push(rec);
       total++;
     }
     row += n;
   }
-  return { available: true, map: map, rows: total, sheet: sh.getName() };
+
+  return {
+    available: true, map: map, rows: total, skippedRows: skipped, expiredRows: expired,
+    sheet: sh.getName(), source: loc.ssName, sourceId: loc.ssId, mode: cols.mode
+  };
 }
 
 /**
@@ -674,14 +993,17 @@ function rscGetIndex_(tableName) {
   var memKey = tableName + ':' + ver;
   if (RSC_MEM_INDEX[memKey]) return RSC_MEM_INDEX[memKey];
 
-  if (!rscDbId_()) {
+  if (!rscDbSources_().length) {
     var none = { available: false, reason: 'DB_NOT_CONFIGURED', map: {}, rows: 0, ver: ver };
     RSC_MEM_INDEX[memKey] = none;
     return none;
   }
 
   var snap = rscSnapRead_(tableName, ver);
-  if (snap) { snap.ver = ver; RSC_MEM_INDEX[memKey] = snap; return snap; }
+  if (snap) { snap.ver = ver; snap.storedIn = 'cache'; RSC_MEM_INDEX[memKey] = snap; return snap; }
+
+  var sheetSnap = rscIdxSheetRead_(tableName, ver);
+  if (sheetSnap) { sheetSnap.ver = ver; RSC_MEM_INDEX[memKey] = sheetSnap; return sheetSnap; }
 
   var resource = 'IDX:' + tableName + ':' + ver;
   var token = rscLeaseAcquire_(resource, RSC_CFG.INDEX.BUILD_LEASE_MS);
@@ -692,7 +1014,7 @@ function rscGetIndex_(tableName) {
     while (waited < RSC_CFG.INDEX.WAIT_MS) {
       rscSleep_(RSC_CFG.INDEX.WAIT_STEP_MS);
       waited += RSC_CFG.INDEX.WAIT_STEP_MS;
-      var again = rscSnapRead_(tableName, ver);
+      var again = rscSnapRead_(tableName, ver) || rscIdxSheetRead_(tableName, ver);
       if (again) { again.ver = ver; RSC_MEM_INDEX[memKey] = again; return again; }
     }
     throw new RscInfraError(
@@ -702,13 +1024,12 @@ function rscGetIndex_(tableName) {
   }
 
   try {
-    var recheck = rscSnapRead_(tableName, ver);
+    var recheck = rscSnapRead_(tableName, ver) || rscIdxSheetRead_(tableName, ver);
     if (recheck) { recheck.ver = ver; RSC_MEM_INDEX[memKey] = recheck; return recheck; }
     var built = rscBuildIndex_(tableName);
     built.ver = ver;
     built.builtAt = rscNowIso_();
-    var w = rscSnapWrite_(tableName, ver, built);
-    built.cached = w.ok;
+    if (built.available) rscIndexPersist_(tableName, ver, built);
     RSC_MEM_INDEX[memKey] = built;
     return built;
   } finally {
@@ -1948,7 +2269,7 @@ function rscLoadMasters_(ss) {
     relationship: rscRelationshipMaster_(),
     periodStart: rscPeriodStart_(),
     idx: {},
-    dbConfigured: !!rscDbId_(),
+    dbConfigured: rscDbSources_().length > 0,
     notes: []
   };
   if (!m.dbConfigured) {
@@ -2226,6 +2547,79 @@ function rscRunLane_(lane) {
   return { lane: lane, claimed: claimed.length, committed: committed, results: results, stats: stats, deferredAll: deferredAll };
 }
 
+/* -------------------------- PEMANASAN INDEX --------------------------- */
+
+/**
+ * Membangun seluruh index master dalam eksekusi TERSENDIRI, sebelum lane mulai.
+ *
+ * Tanpa ini, lane yang kebetulan memenangkan lease pembangunan akan memakai
+ * sebagian besar kuota 6 menitnya hanya untuk memindai tabel besar seperti
+ * m_bp_relation, lalu menyerah di soft deadline. Dengan memisahkannya, biaya
+ * pemindaian dibayar sekali per versi DB oleh satu execution khusus, dan lane
+ * langsung mendapat index yang sudah jadi.
+ */
+function rscPrewarmIndexes() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet() || SpreadsheetApp.openById(rscGetProp_('RSC_MASTER_ID', ''));
+  var runId = rscGetProp_(RSC_CFG.PROP.RUN_ID, '');
+  var started = Date.now();
+  var startedIso = new Date(started).toISOString();
+
+  if (!rscDbSources_().length) {
+    rscDashSet_(ss, 'SYSTEM', {
+      job: 'INDEX PREWARM', state: 'IDLE', stage: 'DB tidak dikonfigurasi', progress: 1,
+      message: 'Tidak ada DB master. Rule berbasis DB akan dilewati.',
+      startedAt: startedIso, runId: runId
+    }, { force: true, history: true });
+    rscArmAllLanes_();
+    return { ok: true, reason: 'NO_DB' };
+  }
+
+  var tables = ['BP_GENERAL', 'BP_RELATION', 'VISIT_SCHEDULE', 'SALESMAN', 'RELATION_TYPE'];
+  var report = [], pending = [];
+
+  for (var i = 0; i < tables.length; i++) {
+    if ((Date.now() - started) > RSC_CFG.RUN.SOFT_DEADLINE_MS) {
+      pending = tables.slice(i);
+      break;
+    }
+    rscDashSet_(ss, 'SYSTEM', {
+      job: 'INDEX PREWARM', state: 'RUNNING', stage: 'Build index ' + tables[i],
+      progress: rscRound_(i / tables.length, 4), currentTotal: (i + 1) + ' / ' + tables.length,
+      message: 'Membangun index master sekali untuk seluruh run.',
+      startedAt: startedIso, elapsedSec: rscRound_((Date.now() - started) / 1000, 1), runId: runId
+    });
+    try {
+      var idx = rscGetIndex_(tables[i]);
+      report.push(tables[i] + '=' + (idx.available
+        ? (idx.rows + ' baris/' + (idx.storedIn || 'memory'))
+        : ('n/a:' + (idx.reason || '-'))));
+    } catch (e) {
+      var c = rscClassify_(e);
+      report.push(tables[i] + '=' + c.kind);
+      if (c.kind === RSC_ERR.INFRA) pending.push(tables[i]);
+    }
+  }
+
+  if (pending.length) {
+    // Masih ada yang belum selesai: lanjutkan di eksekusi berikutnya, dan tetap
+    // nyalakan lane karena index yang sudah jadi sudah bisa dipakai.
+    try {
+      rscDeleteTriggers_(['rscPrewarmIndexes']);
+      ScriptApp.newTrigger('rscPrewarmIndexes').timeBased().after(RSC_CFG.RUN.WORKER_TRIGGER_DELAY_MS).create();
+    } catch (e2) { /* best-effort */ }
+  }
+
+  rscDashSet_(ss, 'SYSTEM', {
+    job: 'INDEX PREWARM', state: pending.length ? 'WAITING' : 'DONE',
+    stage: pending.length ? 'Index sebagian siap' : 'Index siap', progress: 1,
+    message: report.join(' | ') + (pending.length ? (' | tersisa: ' + pending.join(',')) : ''),
+    startedAt: startedIso, elapsedSec: rscRound_((Date.now() - started) / 1000, 1), runId: runId
+  }, { force: true, history: true });
+
+  rscArmAllLanes_();
+  return { ok: true, report: report, pending: pending };
+}
+
 /* ------------------------------ TRIGGER ------------------------------- */
 
 function rscWorker1() { return rscRunLane_(1); }
@@ -2298,14 +2692,26 @@ function rscStartBulkValidation() {
     startedAt: rscNowIso_(), runId: runId
   }, { force: true, history: true });
 
-  var armed = rscArmAllLanes_();
+  // Index dibangun lebih dulu di eksekusi tersendiri; lane dinyalakan olehnya.
+  var prewarmed = false;
+  try {
+    rscDeleteTriggers_(['rscPrewarmIndexes']);
+    ScriptApp.newTrigger('rscPrewarmIndexes').timeBased().after(RSC_CFG.RUN.WORKER_TRIGGER_DELAY_MS).create();
+    prewarmed = true;
+  } catch (e) { prewarmed = false; }
+
+  var armed = prewarmed ? 0 : rscArmAllLanes_();
   rscArmWatchdog_();
   rscDashSet_(ss, 'WATCHDOG', {
-    job: 'BULK WATCHDOG', state: 'WAITING', stage: 'Workers armed', progress: 1,
-    message: armed + ' worker lane dijadwalkan.', startedAt: rscNowIso_(), runId: runId
+    job: 'BULK WATCHDOG', state: 'WAITING', stage: prewarmed ? 'Menunggu index prewarm' : 'Workers armed',
+    progress: 1,
+    message: prewarmed
+      ? 'Index master dibangun lebih dulu, lane akan dinyalakan setelahnya.'
+      : (armed + ' worker lane dijadwalkan.'),
+    startedAt: rscNowIso_(), runId: runId
   }, { force: true, history: true });
 
-  return { runId: runId, stats: stats, armed: armed };
+  return { runId: runId, stats: stats, armed: armed, prewarm: prewarmed };
 }
 
 /** Batalkan run berjalan dan bangun ulang antrean dari baris pertama. */
@@ -2323,7 +2729,7 @@ function rscRestartFromTop() {
 function rscStopRun() {
   var ss = SpreadsheetApp.getActiveSpreadsheet();
   rscSetProp_(RSC_CFG.PROP.RUN_STATE, 'STOPPED');
-  rscDeleteTriggers_(['rscWorker1', 'rscWorker2', 'rscWorker3', 'rscWorker4', 'rscWatchdog']);
+  rscDeleteTriggers_(['rscWorker1', 'rscWorker2', 'rscWorker3', 'rscWorker4', 'rscWatchdog', 'rscPrewarmIndexes']);
   rscDashSet_(ss, 'SYSTEM', {
     job: 'BULK VALIDATION', state: 'STOPPED', stage: 'Run dihentikan', progress: 1,
     message: 'Semua trigger worker dan watchdog dilepas.', startedAt: rscNowIso_()
@@ -2334,7 +2740,7 @@ function rscStopRun() {
 function rscFinishRunIfDone_(ss, runId, stats) {
   if (stats.unfinished > 0) return false;
   rscSetProp_(RSC_CFG.PROP.RUN_STATE, 'DONE');
-  rscDeleteTriggers_(['rscWorker1', 'rscWorker2', 'rscWorker3', 'rscWorker4']);
+  rscDeleteTriggers_(['rscWorker1', 'rscWorker2', 'rscWorker3', 'rscWorker4', 'rscPrewarmIndexes']);
   rscDashSet_(ss, 'SYSTEM', {
     job: 'BULK VALIDATION', state: 'DONE', stage: 'Queue selesai', progress: 1,
     currentTotal: stats.done + ' / ' + stats.total,
@@ -2467,7 +2873,8 @@ function onOpen() {
       .addItem('📋 Ringkasan Antrean', 'rscShowQueueSummary')
       .addSeparator()
       .addSubMenu(SpreadsheetApp.getUi().createMenu('Admin / Recovery')
-        .addItem('Set ID Spreadsheet DB Master', 'rscPromptSetDbId')
+        .addItem('Set Link Spreadsheet DB Master', 'rscPromptSetDbId')
+        .addItem('Inventarisasi Tab DB (Discovery)', 'rscDiscoverDb')
         .addItem('Bind Ulang Otorisasi', 'rscRebindAuthorization')
         .addItem('Bersihkan Cache Index', 'rscClearIndexCache')
         .addItem('Jalankan Self-Test', 'rscRunSelfTestUi'))
@@ -2475,16 +2882,103 @@ function onOpen() {
   } catch (e) { /* konteks tanpa UI */ }
 }
 
+/**
+ * Menerima SATU ATAU BEBERAPA link/ID DB sekaligus (dipisah baris atau koma).
+ * Contoh pemakaian nyata: satu file "Database" dan satu file
+ * "Database m_bp_relation" yang terpisah.
+ */
 function rscPromptSetDbId() {
   var ui = SpreadsheetApp.getUi();
-  var cur = rscDbId_();
-  var res = ui.prompt('DB Master', 'Masukkan Spreadsheet ID / URL database master.\nSaat ini: ' + (cur || '(kosong)') +
-    '\n\nKosongkan lalu OK untuk menghapus (rule berbasis DB akan dilewati, bukan error).', ui.ButtonSet.OK_CANCEL);
+  var cur = rscDbSources_();
+  var res = ui.prompt('DB Master',
+    'Tempel link / ID spreadsheet database master. Boleh lebih dari satu, ' +
+    'pisahkan dengan baris baru atau koma.\n\nSaat ini: ' + (cur.length ? cur.join(', ') : '(kosong)') +
+    '\n\nKosongkan lalu OK untuk menghapus (rule berbasis DB akan dilewati, bukan error).',
+    ui.ButtonSet.OK_CANCEL);
   if (res.getSelectedButton() !== ui.Button.OK) return;
-  var id = rscFileId_(res.getResponseText());
-  rscSetProp_(RSC_CFG.PROP.DB_ID, id);
+  var ids = rscSetDbSources_(res.getResponseText());
+  ui.alert(ids.length ? ('DB master di-set (' + ids.length + '): \n' + ids.join('\n')) : 'DB master dikosongkan.');
+}
+
+/** Simpan daftar sumber DB dari teks bebas. Dapat dipanggil tanpa UI. */
+function rscSetDbSources_(text) {
+  var parts = String(text || '').split(/[\n,;]+/);
+  var ids = [];
+  for (var i = 0; i < parts.length; i++) {
+    var id = rscConfigId_(parts[i]);
+    if (id && ids.indexOf(id) < 0) ids.push(id);
+  }
+  rscSetProp_(RSC_CFG.PROP.DB_ID, ids.length ? ids[0] : '');
+  rscSetProp_(RSC_CFG.PROP.DB_ID_EXTRA, ids.length > 1 ? ids.slice(1).join(',') : '');
   RSC_MEM_INDEX = {};
-  ui.alert(id ? ('DB master di-set: ' + id) : 'DB master dikosongkan.');
+  return ids;
+}
+
+/**
+ * Inventarisasi seluruh tab pada setiap spreadsheet DB dan petakan ke tabel
+ * yang dipakai engine. Hasilnya ditulis ke sheet "_RSC_DB_DISCOVERY" agar
+ * operator bisa melihat tab mana yang dikenali dan mana yang belum.
+ * Menjalankan ini tidak mengubah apa pun selain sheet laporan.
+ */
+function rscDiscoverDb() {
+  var ss = SpreadsheetApp.getActiveSpreadsheet();
+  var ids = rscDbSources_();
+  var rows = [['Spreadsheet', 'Spreadsheet ID', 'Tab', 'Baris', 'Kolom', 'Mode', 'Dipakai sebagai',
+               'Header / contoh baris 1']];
+
+  // Tab mana yang akhirnya dipilih untuk tiap tabel engine.
+  var chosen = {};
+  for (var t in RSC_CFG.DB_TABLES) {
+    if (!Object.prototype.hasOwnProperty.call(RSC_CFG.DB_TABLES, t)) continue;
+    try {
+      var loc = rscLocateTable_(RSC_CFG.DB_TABLES[t]);
+      if (loc) chosen[loc.ssId + '::' + loc.sheet.getName()] = t;
+    } catch (e) { /* sumber tidak terbaca; tetap dilaporkan di bawah */ }
+  }
+
+  for (var i = 0; i < ids.length; i++) {
+    var db;
+    try { db = SpreadsheetApp.openById(ids[i]); }
+    catch (e) {
+      rows.push(['(tidak dapat dibuka)', ids[i], '', '', '', '', '', String(e)]);
+      continue;
+    }
+    var sheets = db.getSheets();
+    for (var sIdx = 0; sIdx < sheets.length; sIdx++) {
+      var sh = sheets[sIdx];
+      var lr = sh.getLastRow(), lc = sh.getLastColumn();
+      var first = (lr >= 1 && lc >= 1)
+        ? sh.getRange(1, 1, 1, Math.min(lc, 20)).getDisplayValues()[0].join(' | ')
+        : '';
+      var role = chosen[ids[i] + '::' + sh.getName()] || '';
+      var mode = '';
+      if (role) {
+        var cols = rscResolveColumns_(RSC_CFG.DB_TABLES[role],
+          (lr >= 1 && lc >= 1) ? sh.getRange(1, 1, 1, lc).getDisplayValues()[0] : []);
+        mode = cols ? cols.mode : 'TIDAK TERPETAKAN';
+      }
+      rows.push([db.getName(), ids[i], sh.getName(), lr, lc, mode, role, first.substring(0, 500)]);
+    }
+  }
+
+  // Tabel engine yang belum menemukan tab apa pun.
+  for (var t2 in RSC_CFG.DB_TABLES) {
+    if (!Object.prototype.hasOwnProperty.call(RSC_CFG.DB_TABLES, t2)) continue;
+    var used = false;
+    for (var c in chosen) { if (chosen[c] === t2) { used = true; break; } }
+    if (!used) {
+      rows.push(['(belum ditemukan)', '', '', '', '', '', t2,
+        'Alias yang dicari: ' + RSC_CFG.DB_TABLES[t2].sheets.join(', ')]);
+    }
+  }
+
+  var out = ss.getSheetByName('_RSC_DB_DISCOVERY');
+  if (!out) out = ss.insertSheet('_RSC_DB_DISCOVERY');
+  out.clear();
+  out.getRange(1, 1, rows.length, rows[0].length).setValues(rows);
+  out.setFrozenRows(1);
+  try { ss.setActiveSheet(out); } catch (e) { /* tanpa UI */ }
+  return rows;
 }
 
 function rscRebindAuthorization() {
@@ -2499,10 +2993,19 @@ function rscRebindAuthorization() {
 
 function rscClearIndexCache() {
   RSC_MEM_INDEX = {};
-  var id = rscDbId_();
-  if (id) {
-    rscSetProp_(RSC_CFG.PROP.INDEX_VER + id, '');
-    rscSetProp_(RSC_CFG.PROP.INDEX_VER + id + ':at', '');
+  var tag = rscDbSources_().join(',');
+  if (tag) {
+    rscSetProp_(RSC_CFG.PROP.INDEX_VER + tag, '');
+    rscSetProp_(RSC_CFG.PROP.INDEX_VER + tag + ':at', '');
+  }
+  var store = rscIndexStore_(false);
+  if (store) {
+    var sheets = store.getSheets();
+    for (var i = 0; i < sheets.length; i++) {
+      if (sheets[i].getName().indexOf('IDX_') === 0) {
+        try { sheets[i].getRange(1, 1).setValue('stale'); } catch (e) { /* abaikan */ }
+      }
+    }
   }
   try { SpreadsheetApp.getUi().alert('Cache index dibersihkan. Index akan dibangun ulang saat dibutuhkan.'); }
   catch (e) { /* tanpa UI */ }
@@ -2597,6 +3100,49 @@ function rscSelfTest() {
   eq('infra quota', rscClassify_(new Error('Service invoked too many times')).kind, RSC_ERR.INFRA);
   eq('access denied', rscClassify_(new Error('You do not have permission to access')).kind, RSC_ERR.ACCESS);
   eq('data error', rscClassify_(new RscDataError('Layout A:P tidak sesuai')).kind, RSC_ERR.DATA);
+
+  /* tanggal dari DB master: epoch milidetik & serial */
+  eq('epoch 9999-12-31', rscDateStr_('253402214400000'), '9999-12-31');
+  eq('epoch 2026-03-01', rscDateStr_('1772323200000'), '2026-03-01');
+  eq('epoch sebagai angka', rscDateStr_(1772323200000), '2026-03-01');
+  eq('serial spreadsheet', rscDateStr_('46235'), '2026-08-01');
+  eq('bukan tanggal', rscDateStr_('ZWS003'), '');
+
+  /* parser ID konfigurasi vs parser link antrean */
+  eq('config dari URL', rscConfigId_('https://docs.google.com/spreadsheets/d/1psDMLLr98FuHjKhhfBTwg8p0kBA3w26xrdXb6_tu7CU/edit?usp=drive_link'), '1psDMLLr98FuHjKhhfBTwg8p0kBA3w26xrdXb6_tu7CU');
+  eq('config dari ID telanjang', rscConfigId_('DB_MASTER_ID'), 'DB_MASTER_ID');
+  eq('config menolak teks berspasi', rscConfigId_('TIDAK ADA ROLINGAN'), '');
+  eq('link antrean menolak ID pendek', rscFileId_('DB_MASTER_ID'), '');
+
+  /* pencocokan nama tab tidak boleh menyambar tabel lain */
+  var fakeSheets = ['m_bp_relation', 'm_sales_info', 'm_bp_general', 'catatan'];
+  var fakeSs = {
+    getSheets: function () {
+      var out = [];
+      for (var i = 0; i < fakeSheets.length; i++) {
+        (function (nm) { out.push({ getName: function () { return nm; } }); })(fakeSheets[i]);
+      }
+      return out;
+    }
+  };
+  var hitRel = rscFindSheet_(fakeSs, RSC_CFG.DB_TABLES.BP_RELATION.sheets);
+  eq('BP_RELATION menemukan m_bp_relation', hitRel && hitRel.getName(), 'm_bp_relation');
+  eq('RELATION_TYPE tidak menyambar m_bp_relation',
+     rscFindSheet_(fakeSs, RSC_CFG.DB_TABLES.RELATION_TYPE.sheets), null);
+  var hitGen = rscFindSheet_(fakeSs, RSC_CFG.DB_TABLES.BP_GENERAL.sheets);
+  eq('BP_GENERAL menemukan m_bp_general', hitGen && hitGen.getName(), 'm_bp_general');
+  eq('VISIT_SCHEDULE tidak menemukan apa pun',
+     rscFindSheet_(fakeSs, RSC_CFG.DB_TABLES.VISIT_SCHEDULE.sheets), null);
+
+  /* mode posisional untuk tabel tanpa header */
+  var posCols = rscResolveColumns_(RSC_CFG.DB_TABLES.BP_RELATION,
+    ['https://docs.google.com/spreadsheets/d/x/edit', '', '', '', '']);
+  eq('m_bp_relation terdeteksi posisional', posCols && posCols.mode, 'positional');
+  eq('data posisional mulai baris 1', posCols && posCols.firstDataRow, 1);
+  var hdrCols = rscResolveColumns_(RSC_CFG.DB_TABLES.SALESMAN,
+    ['id', 'sls_org', 'sls_office', 'salesman_id', 'salesman_name', 'sales_type']);
+  eq('m_sales_info terdeteksi header', hdrCols && hdrCols.mode, 'header');
+  eq('data header mulai baris 2', hdrCols && hdrCols.firstDataRow, 2);
 
   /* schedule parser */
   var p = rscParseSchedule_('W1W,W3W');

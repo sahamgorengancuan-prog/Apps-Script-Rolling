@@ -44,8 +44,54 @@ dan melaporkan progres ke sheet `Job Logging Details`.
 
 | Kunci | Wajib | Keterangan |
 |-------|-------|------------|
-| `RSC_DB_SPREADSHEET_ID` | tidak | Spreadsheet DB master (`m_bp_general`, `m_bp_relation`, `m_visit_schedule`, `m_salesman`, `m_relationship`). Nama sheet ditoleransi lewat alias & prefix. |
+| `RSC_DB_SPREADSHEET_ID` | tidak | Spreadsheet DB master utama. |
+| `RSC_DB_EXTRA_IDS` | tidak | Spreadsheet DB tambahan, dipisah koma. Diisi otomatis bila Anda menempel beberapa link sekaligus di menu. |
 | `RSC_PERIOD_START` | tidak | Awal periode rolling `YYYY-MM-DD`. Default: tanggal 1 bulan berjalan. Dipakai rule **R4**. |
+| `RSC_INDEX_STORE_ID` | otomatis | Spreadsheet `_RSC_INDEX_CACHE` yang dibuat sendiri oleh script untuk menyimpan index besar. Jangan dihapus. |
+
+---
+
+## 2b. Sumber DB master
+
+Engine mendukung **lebih dari satu spreadsheet DB**, karena pada praktiknya
+`m_bp_relation` memang berada di file terpisah. Tempel semua link sekaligus
+(pisah baris atau koma) lewat **Admin / Recovery → Set Link Spreadsheet DB Master**.
+
+Bentuk data yang sudah didukung dan diuji:
+
+| Tab | Bentuk | Penanganan |
+|-----|--------|------------|
+| `m_bp_relation` | **tanpa baris header**; baris 1 berisi URL, kolom berurutan `customer_id, relationship, salesman_id, valid_from, valid_to` | mode **posisional**; baris non-numerik di kolom kunci dilewati otomatis |
+| `m_sales_info` | header CSV `id, sls_org, sls_office, salesman_id, …`; tanggal dalam **epoch milidetik** (`253402214400000` = 9999-12-31) | mode **header**; epoch milidetik, serial spreadsheet, `Date`, dan teks `YYYY-MM-DD`/`DD/MM/YYYY` semuanya dinormalisasi |
+| lainnya | header biasa | dicocokkan lewat alias nama kolom |
+
+Jalankan **Admin / Recovery → Inventarisasi Tab DB (Discovery)** untuk melihat
+sheet `_RSC_DB_DISCOVERY`: daftar seluruh tab di setiap DB, jumlah baris, mode
+yang terdeteksi, tabel engine yang memakainya, dan tabel yang **belum** menemukan
+tab-nya. Tab yang belum terpetakan cukup ditambahkan aliasnya di `RSC_CFG.DB_TABLES`.
+
+Pencocokan nama tab sengaja **ketat** (persis, atau prefix hanya bila nama tab
+mentok batas 31 karakter). Tanpa itu alias pendek seperti `m_bp` akan menyambar
+tab `m_bp_relation` dan master terbaca dari tabel yang salah.
+
+### Index tabel besar
+
+`m_bp_relation` berukuran puluhan MB. Snapshot index-nya tidak muat di
+CacheService, sehingga penyimpanan bertingkat:
+
+1. **Memori execution** — paling cepat.
+2. **CacheService** — untuk snapshot < 5 MB.
+3. **Spreadsheet `_RSC_INDEX_CACHE`** — snapshot besar dimaterialisasi menjadi
+   sheet `IDX_<TABEL>` berisi 2 kolom (key + nilai terpaket) dengan penanda versi.
+   Tanpa tier ini, penulisan cache akan gagal diam-diam dan **setiap** execution
+   membangun ulang index dari sumber — persis pola yang membuat versi lama macet.
+
+Baris yang masa berlakunya sudah lewat (dengan grace 60 hari) tidak diindeks,
+sehingga index tetap ramping tanpa mengorbankan pemeriksaan relasi aktif.
+
+Pembangunan index berjalan di **eksekusi tersendiri** (`rscPrewarmIndexes`) yang
+dijadwalkan sebelum lane menyala. Dengan begitu biaya pemindaian tabel besar
+dibayar sekali per versi DB, bukan memakan kuota 6 menit milik worker.
 
 ---
 
@@ -100,16 +146,21 @@ dengan stub `SpreadsheetApp` / `PropertiesService` / `CacheService` / `LockServi
 (62 file anak — sama dengan `valid=62` pada log produksi).
 
 ```bash
-node test/e2e.test.js     # 74 assertion — pipeline penuh
+npm test                  # menjalankan ketiganya
+node test/e2e.test.js     # 82 assertion — pipeline penuh
 node test/scale.test.js   # 24 assertion — skala & kasus tepi
+node test/db.test.js      # 72 assertion — bentuk nyata kedua spreadsheet DB
 ```
 
-Cakupan: pipeline 62 link end-to-end, kebenaran hasil di file anak, anti-duplikat
-lane, DB busy tidak menambah Attempts (7× berturut-turut tetap 0 `HARD_ERROR`),
-lease per-resource, 12.000 baris master + 5.000 lookup tanpa baca ulang, watchdog
-anti-loop, error akses/layout, dashboard & write-back Rekap, jalan tanpa DB,
-idempotensi restart, file 50.000 baris (~28.500 baris/detik), konflik masif,
-sel `Date` asli, `=HYPERLINK`, dan batas waktu eksekusi lane.
+Cakupan: pipeline 62 link end-to-end, prewarm index di eksekusi terpisah,
+kebenaran hasil di file anak, anti-duplikat lane, DB busy tidak menambah Attempts
+(7× berturut-turut tetap 0 `HARD_ERROR`), lease per-resource, 12.000 baris master
++ 5.000 lookup tanpa baca ulang, watchdog anti-loop, error akses/layout,
+dashboard & write-back Rekap, jalan tanpa DB, idempotensi restart, file 50.000
+baris (~28.500 baris/detik), konflik masif, sel `Date` asli, `=HYPERLINK`, batas
+waktu eksekusi lane, dua sumber DB, `m_bp_relation` tanpa header, epoch
+milidetik, materialisasi index ke sheet + pembacaan dingin tanpa menyentuh
+sumber, invalidasi saat versi DB berubah, dan regresi pencocokan nama tab.
 
-`rscSelfTest()` juga dapat dijalankan langsung dari editor Apps Script
-(menu **Admin / Recovery → Jalankan Self-Test**).
+`rscSelfTest()` (47 assertion) juga dapat dijalankan langsung dari editor Apps
+Script lewat menu **Admin / Recovery → Jalankan Self-Test**.
