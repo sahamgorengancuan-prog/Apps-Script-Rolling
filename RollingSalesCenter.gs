@@ -116,13 +116,16 @@ var RSC_DB_PARAMETERS = {
     name: ['bp_name', 'name']
   },
   visitHeaders: {
-    customer: ['cust_id', 'customer_id', 'bp_id'],
-    salesman: ['salesman_id', 'bp_id_rlt2'],
-    visitCategory: ['visit_category'],
-    visitType: ['visit_type'],
-    schedule: ['visit_schedule', 'schedule_visit'],
-    validFrom: ['visit_valid_from', 'valid_from', 'from_timestamp'],
-    validTo: ['visit_valid_to', 'valid_to', 'to_timestamp']
+    customer: ['cust_id', 'customer_id', 'bp_id', 'bp_id_rlt1', 'partner'],
+    salesman: ['salesman_id', 'bp_id_rlt2', 'sales_id', 'employee_id'],
+    visitCategory: ['visit_category', 'visit_cat', 'visit_category_id', 'frequency', 'freq'],
+    visitType: ['visit_type', 'visit_type_id', 'type'],
+    schedule: ['visit_schedule', 'schedule_visit', 'schedule', 'visit_day'],
+    validFrom: ['visit_valid_from', 'valid_from', 'from_timestamp', 'start_date',
+                'effective_date', 'visit_start_date', 'date_from', 'valid_from_date',
+                'begin_date', 'start_timestamp'],
+    validTo: ['visit_valid_to', 'valid_to', 'to_timestamp', 'end_date',
+              'visit_end_date', 'date_to', 'valid_to_date', 'end_timestamp']
   },
 
   // Baris yang masa berlakunya sudah lewat lebih dari grace ini tidak diindeks.
@@ -484,6 +487,23 @@ var RSC_STANDARD_VALIDATION_V27_20260814 = {
   masterLinkCol: 5,
   firstDataRow: 2,
   masterHeaderScanRows: 30,
+
+  // Pembacaan/penulisan sheet anak dipotong per blok baris. Tanpa ini,
+  // template dengan 50.000+ baris memicu:
+  //   "Requested data exceeds the maximum allowed size."
+  // yang membuat file tidak pernah selesai divalidasi.
+  readChunkRows: 5000,
+  writeChunkRows: 5000,
+  minChunkRows: 100,
+
+  // Kolom penanda untuk mencari baris data terakhir yang sebenarnya.
+  // getLastRow() ikut menghitung baris yang hanya berformat/berdropdown,
+  // sehingga bisa melaporkan 50.708 padahal datanya cuma ~1.400 baris.
+  probeColumns: { ROLLING: [1, 3, 5], SALES_OFFICE: [1, 5, 6], SALESMAN_TYPE: [1, 2, 3] },
+  probeChunkRows: 20000,
+
+  // Dropdown tidak dipasang ulang bila area datanya sangat besar.
+  dropdownMaxRows: 20000,
   manifestSheetName: '_RSC_VALIDATION_MANIFEST_V27',
   manifestHeaders: [
     'Run ID', 'File ID', 'Master Rows JSON', 'URL', 'File Name', 'Status', 'Attempts', 'Worker', 'Lease Until',
@@ -983,6 +1003,7 @@ function RscAccessError(msg, meta) {
 RscAccessError.prototype = Object.create(Error.prototype);
 
 var RSC_INFRA_PATTERNS = [
+  /maximum allowed size/i, /smaller range of cells/i, /too large/i, /exceeds/i,
   /lock/i, /lease/i, /busy/i, /contention/i, /concurrent/i,
   /timed? ?out/i, /timeout/i, /deadline/i,
   /rate limit/i, /quota/i, /too many/i, /try again/i, /coba lagi/i,
@@ -1134,6 +1155,137 @@ function RSC_UI_PAINT_STATUS_COLUMN_20260820_(sheet, firstRow, col, statuses, wi
   } catch (e) {
     return 0;
   }
+}
+
+/* -------------------------------------------------------------
+ * PEMBACAAN & PENULISAN SHEET BESAR
+ * -------------------------------------------------------------
+ * Google Sheets menolak satu request yang terlalu besar:
+ *   "Requested data exceeds the maximum allowed size. Please get a smaller
+ *    range of cells."
+ * Template rolling nyata punya 50.708 baris berformat walau datanya hanya
+ * ~1.400 baris, sehingga satu getValues() atas seluruh sheet selalu gagal dan
+ * file tidak pernah selesai divalidasi. Semua akses dipotong per blok, dan
+ * ukuran bloknya mengecil sendiri bila masih terlalu besar.
+ * ----------------------------------------------------------- */
+
+function rscIsOversizedRangeError_(err) {
+  var msg = (err && err.message) ? String(err.message) : String(err);
+  return /maximum allowed size|smaller range of cells|too large|exceeds/i.test(msg);
+}
+
+/** Baca satu kolom sebagai teks, per blok. Dipakai untuk mencari baris terakhir. */
+function rscReadColumnChunked_(sheet, col, firstRow, numRows) {
+  var V = RSC_STANDARD_VALIDATION_V27_20260814;
+  var step = V.probeChunkRows || 20000;
+  var out = [], r = 0;
+  while (r < numRows) {
+    var n = Math.min(step, numRows - r);
+    try {
+      var block = sheet.getRange(firstRow + r, col, n, 1).getDisplayValues();
+      for (var i = 0; i < block.length; i++) out.push(block[i][0]);
+      r += n;
+    } catch (e) {
+      if (rscIsOversizedRangeError_(e) && step > (V.minChunkRows || 100)) {
+        step = Math.max(V.minChunkRows || 100, Math.floor(step / 4));
+        continue;
+      }
+      throw e;
+    }
+  }
+  return out;
+}
+
+/**
+ * Baris data terakhir yang sebenarnya. getLastRow() ikut menghitung baris yang
+ * hanya punya format atau dropdown, jadi tidak bisa dipakai apa adanya.
+ */
+function rscLastDataRow_(sheet, spec) {
+  var V = RSC_STANDARD_VALIDATION_V27_20260814;
+  var last = sheet.getLastRow();
+  if (last < 2) return 1;
+  var cols = (V.probeColumns && V.probeColumns[spec.key]) || [1];
+  var best = 1;
+  for (var c = 0; c < cols.length; c++) {
+    var col = cols[c];
+    if (col > sheet.getMaxColumns()) continue;
+    var vals = rscReadColumnChunked_(sheet, col, 2, last - 1);
+    for (var i = vals.length - 1; i >= 0; i--) {
+      if (rscText_(vals[i])) { if (i + 2 > best) best = i + 2; break; }
+    }
+  }
+  return best;
+}
+
+/** Baca rentang persegi per blok baris. */
+function rscReadValuesChunked_(sheet, firstRow, firstCol, numRows, numCols) {
+  var V = RSC_STANDARD_VALIDATION_V27_20260814;
+  var step = V.readChunkRows || 5000;
+  var out = [], r = 0;
+  while (r < numRows) {
+    var n = Math.min(step, numRows - r);
+    try {
+      var block = sheet.getRange(firstRow + r, firstCol, n, numCols).getValues();
+      for (var i = 0; i < block.length; i++) out.push(block[i]);
+      r += n;
+    } catch (e) {
+      if (rscIsOversizedRangeError_(e) && step > (V.minChunkRows || 100)) {
+        step = Math.max(V.minChunkRows || 100, Math.floor(step / 4));
+        continue;
+      }
+      throw e;
+    }
+  }
+  return out;
+}
+
+function rscIsValidationRejectError_(err) {
+  var msg = (err && err.message) ? String(err.message) : String(err);
+  return /data validation|validasi data|dropdown|please select a value|pilih .* dari|invalid data|masukkan nilai/i.test(msg);
+}
+
+/**
+ * Tulis nilai per blok, dan sembuhkan sendiri bila ditolak data validation.
+ *
+ * Template lama memasang aturan list "reject input" pada kolom Schedule Visit
+ * yang formula sumbernya sudah menjadi #REF!, sehingga TIDAK ADA nilai yang
+ * diterima dan setiap setValues() gagal dengan
+ *   "Pilih Schedule Visit dari dropdown."
+ * Aturan rusak itu dibuang lalu penulisan diulang; dropdown yang benar
+ * dipasang kembali sesudahnya oleh rscApplyTemplateDropdowns_.
+ */
+function rscSetValuesChunked_(sheet, firstRow, firstCol, values, stats) {
+  if (!values || !values.length) return 0;
+  var V = RSC_STANDARD_VALIDATION_V27_20260814;
+  var step = V.writeChunkRows || 5000;
+  var numCols = values[0].length;
+  var r = 0, repaired = 0;
+  while (r < values.length) {
+    var n = Math.min(step, values.length - r);
+    var block = values.slice(r, r + n);
+    var rng = sheet.getRange(firstRow + r, firstCol, n, numCols);
+    try {
+      rng.setValues(block);
+      r += n;
+    } catch (e) {
+      if (rscIsOversizedRangeError_(e) && step > (V.minChunkRows || 100)) {
+        step = Math.max(V.minChunkRows || 100, Math.floor(step / 4));
+        continue;
+      }
+      if (rscIsValidationRejectError_(e)) {
+        try {
+          rng.setDataValidation(null);
+          rng.setValues(block);
+          repaired += n;
+          r += n;
+          continue;
+        } catch (e2) { throw e2; }
+      }
+      throw e;
+    }
+  }
+  if (stats && repaired) stats.validationRepairedRows = (stats.validationRepairedRows || 0) + repaired;
+  return repaired;
 }
 
 
@@ -1600,7 +1752,13 @@ function rscBuildHeaderIndex_(aliases, keySpecs, valSpecs, opts) {
   var keyIdx = [];
   for (var k = 0; k < keySpecs.length; k++) {
     var ci = rscPickCol_(hmap, keySpecs[k]);
-    if (ci < 0) return { available: false, reason: 'KEY_COLUMN_MISSING', map: {}, rows: 0, sheet: sh.getName() };
+    if (ci < 0) {
+      return {
+        available: false, reason: 'KEY_COLUMN_MISSING', map: {}, rows: 0, sheet: sh.getName(),
+        wantedAliases: keySpecs[k].slice(),
+        actualHeaders: header.slice(0, 40).filter(function (h) { return rscText_(h) !== ''; })
+      };
+    }
     keyIdx.push(ci);
   }
   var valIdx = [], fields = [], fieldPresent = {};
@@ -3191,7 +3349,7 @@ function RSC_V28_3_WRITE_ROLLING_SNAPSHOT_20260814_(sheet, spec, result, dataRow
       while (i + 1 < pending.length && pending[i + 1].row === pending[i].row + 1) i++;
       var block = [];
       for (var k = start; k <= i; k++) block.push(pending[k].values);
-      sheet.getRange(pending[start].row, 1, block.length, spec.dataCols).setValues(block);
+      rscSetValuesChunked_(sheet, pending[start].row, 1, block, result);
       i++;
     }
   }
@@ -3203,12 +3361,12 @@ function RSC_V28_3_WRITE_ROLLING_SNAPSHOT_20260814_(sheet, spec, result, dataRow
     if (pos >= 0 && pos < dataRowCount) out[pos] = [result.status[r], result.detail[r]];
   }
   if (spec.errorCol === spec.statusCol + 1) {
-    sheet.getRange(2, spec.statusCol, dataRowCount, 2).setValues(out);
+    rscSetValuesChunked_(sheet, 2, spec.statusCol, out, result);
   } else {
     var s = [], d = [];
     for (var q = 0; q < out.length; q++) { s.push([out[q][0]]); d.push([out[q][1]]); }
-    sheet.getRange(2, spec.statusCol, dataRowCount, 1).setValues(s);
-    sheet.getRange(2, spec.errorCol, dataRowCount, 1).setValues(d);
+    rscSetValuesChunked_(sheet, 2, spec.statusCol, s, result);
+    rscSetValuesChunked_(sheet, 2, spec.errorCol, d, result);
   }
   rscApplyStatusColors_(sheet, spec, out, dataRowCount);
   return dataRowCount;
@@ -3232,12 +3390,16 @@ function rscApplyStatusColors_(sheet, spec, out, dataRowCount) {
       fc.push([paint.font, paint.font]);
       fw.push([paint.bold ? 'bold' : 'normal', 'normal']);
     }
-    if (spec.errorCol === spec.statusCol + 1) {
-      var rng = sheet.getRange(2, spec.statusCol, dataRowCount, 2);
-      rng.setBackgrounds(bg);
-      if (rng.setFontColors) rng.setFontColors(fc);
-      if (rng.setFontWeights) rng.setFontWeights(fw);
-      var det = sheet.getRange(2, spec.errorCol, dataRowCount, 1);
+    if (spec.errorCol !== spec.statusCol + 1) return;
+    var V = RSC_STANDARD_VALIDATION_V27_20260814;
+    var step = V.writeChunkRows || 5000;
+    for (var r0 = 0; r0 < dataRowCount; r0 += step) {
+      var n = Math.min(step, dataRowCount - r0);
+      var rng = sheet.getRange(2 + r0, spec.statusCol, n, 2);
+      rng.setBackgrounds(bg.slice(r0, r0 + n));
+      if (rng.setFontColors) rng.setFontColors(fc.slice(r0, r0 + n));
+      if (rng.setFontWeights) rng.setFontWeights(fw.slice(r0, r0 + n));
+      var det = sheet.getRange(2 + r0, spec.errorCol, n, 1);
       if (det.setWrap) det.setWrap(true);
     }
   } catch (e) { /* warna bersifat kosmetik, tidak boleh menggagalkan validasi */ }
@@ -3826,12 +3988,14 @@ function rscProcessTask_(task, masters, onStage) {
     if (layoutErr) { layoutProblems.push(sh.getName() + ' :: ' + layoutErr); continue; }
 
     rscEnsureResultHeaders_(sh, spec);
-    var dataRows = Math.max(0, sh.getLastRow() - 1);
+    // Baris data yang sebenarnya, bukan getLastRow() yang ikut menghitung
+    // baris berformat/berdropdown sampai 50.708.
+    var dataRows = Math.max(0, rscLastDataRow_(sh, spec) - 1);
 
     // getValues (bukan getDisplayValues) supaya sel tanggal terbaca sebagai
     // objek Date. Format tampilan bergantung locale dan bisa membuat
     // 01/08/2026 terbaca sebagai 8 Januari.
-    var values = dataRows ? sh.getRange(2, 1, dataRows, needCols).getValues() : [];
+    var values = dataRows ? rscReadValuesChunked_(sh, 2, 1, dataRows, needCols) : [];
 
     var res = rscValidateValues_(spec, values, masters);
     normSec += res.timing.normalizeSec;
@@ -3871,6 +4035,25 @@ function rscProcessTask_(task, masters, onStage) {
 }
 
 /** Segarkan dropdown template sesuai master. Kosmetik; kegagalan diabaikan. */
+/** Semua token Schedule Visit yang sah: W1..W4 x M/T/W/TH/F/S/SU. */
+function rscScheduleTokenOptions_() {
+  var out = [];
+  for (var w = 1; w <= 4; w++) {
+    for (var d = 0; d < VISIT_DAYS.length; d++) out.push('W' + w + VISIT_DAYS[d]);
+  }
+  return out;
+}
+
+/**
+ * Pasang dropdown template.
+ *
+ * PENTING: semua aturan memakai setAllowInvalid(true) sehingga tidak pernah
+ * MENOLAK penulisan. Template lama memasang aturan "reject input" pada kolom
+ * Schedule Visit yang formula sumbernya sudah menjadi #REF!, sehingga tidak ada
+ * nilai yang diterima dan setiap penulisan gagal dengan
+ * "Pilih Schedule Visit dari dropdown.". Memasang ulang kolom K di sini
+ * menyembuhkan template itu secara permanen.
+ */
 function rscApplyTemplateDropdowns_(sheet, spec, masters) {
   if (spec.key !== 'ROLLING') return;
   var V = RSC_STANDARD_VALIDATION_V27_20260814;
@@ -3879,6 +4062,7 @@ function rscApplyTemplateDropdowns_(sheet, spec, masters) {
     Math.max(sheet.getMaxRows(), 2));
   var n = lastRow - 1;
   if (n < 1) return;
+  if (n > (V.dropdownMaxRows || 20000)) n = V.dropdownMaxRows || 20000;
 
   function listRule(items, help) {
     return SpreadsheetApp.newDataValidation()
@@ -3907,6 +4091,10 @@ function rscApplyTemplateDropdowns_(sheet, spec, masters) {
       listRule(VISIT_TYPE_OPTIONS.slice(), 'Visit Type hanya 01 sampai 12. Gunakan format 2 digit.'));
     sheet.getRange(2, 14, n, 1).setDataValidation(
       listRule(REASON_OPTIONS.slice(), 'Reason hanya Rolling atau Toko Bangkrut.'));
+    // Kolom K: mengganti aturan lama yang rusak (#REF!) dan menolak input.
+    sheet.getRange(2, 11, n, 1).setDataValidation(
+      listRule(rscScheduleTokenOptions_(),
+        'Pilih Schedule Visit dari dropdown. Token W1M sampai W4SU, dipisah koma.'));
   } catch (e) { /* dropdown kosmetik */ }
 }
 
@@ -4249,8 +4437,8 @@ function RSC_STANDARD_VALIDATE_ACTIVE_SHEET_20260814() {
   if (layoutErr) return rscAlert_('Layout tidak sesuai', layoutErr);
 
   rscEnsureResultHeaders_(sh, spec);
-  var dataRows = Math.max(0, sh.getLastRow() - 1);
-  var values = dataRows ? sh.getRange(2, 1, dataRows, needCols).getValues() : [];
+  var dataRows = Math.max(0, rscLastDataRow_(sh, spec) - 1);
+  var values = dataRows ? rscReadValuesChunked_(sh, 2, 1, dataRows, needCols) : [];
   var res = rscValidateValues_(spec, values, masters);
   rscWriteResults_(sh, spec, res, dataRows);
   rscApplyTemplateDropdowns_(sh, spec, masters);
@@ -5538,7 +5726,10 @@ function RSC_PERF11_DIAGNOSE_DB_ACCESS_20260819() {
           (idx.mode ? (', mode=' + idx.mode) : ''));
       } else {
         res.push('--  ' + tables[t] + ' TIDAK DITEMUKAN (' + ((idx && idx.reason) || '-') + ')' +
-          '\n    alias dicari: ' + alias +
+          '\n    alias tabel dicari: ' + alias +
+          (idx && idx.sheet ? ('\n    tab ditemukan   : ' + idx.sheet) : '') +
+          (idx && idx.wantedAliases ? ('\n    kolom dicari    : ' + idx.wantedAliases.join(', ')) : '') +
+          (idx && idx.actualHeaders ? ('\n    header asli     : ' + idx.actualHeaders.join(' | ')) : '') +
           '\n    rule terkait akan DILEWATI, bukan dijadikan error.');
       }
     } catch (eT) {
@@ -6069,8 +6260,8 @@ function RSC_PERF10_BENCHMARK_ACTIVE_ROLLING_20260819() {
   var masters = rscLoadMasters_(ss);
   var tM = Date.now();
   var needCols = Math.max(spec.errorCol, spec.header.length);
-  var dataRows = Math.max(0, sh.getLastRow() - 1);
-  var values = dataRows ? sh.getRange(2, 1, dataRows, needCols).getValues() : [];
+  var dataRows = Math.max(0, rscLastDataRow_(sh, spec) - 1);
+  var values = dataRows ? rscReadValuesChunked_(sh, 2, 1, dataRows, needCols) : [];
   var tR = Date.now();
   var res = rscValidateValues_(spec, values, masters);
   var tV = Date.now();
@@ -7214,8 +7405,8 @@ function RSC_V28_2_AUTO_VALIDATE_WORKER_20260814() {
   var needCols = Math.max(spec.errorCol, spec.header.length);
   var width = Math.max(needCols, target.getLastColumn() || needCols);
   if (rscCheckLayout_(spec, target.getRange(1, 1, 1, width).getDisplayValues()[0])) return { skipped: true };
-  var dataRows = Math.max(0, target.getLastRow() - 1);
-  var values = dataRows ? target.getRange(2, 1, dataRows, needCols).getValues() : [];
+  var dataRows = Math.max(0, rscLastDataRow_(target, spec) - 1);
+  var values = dataRows ? rscReadValuesChunked_(target, 2, 1, dataRows, needCols) : [];
   var res = rscValidateValues_(spec, values, masters);
   rscWriteResults_(target, spec, res, dataRows);
   rscSetProp_(C.pAutoValidateLastResult,

@@ -271,6 +271,7 @@ function RscAccessError(msg, meta) {
 RscAccessError.prototype = Object.create(Error.prototype);
 
 var RSC_INFRA_PATTERNS = [
+  /maximum allowed size/i, /smaller range of cells/i, /too large/i, /exceeds/i,
   /lock/i, /lease/i, /busy/i, /contention/i, /concurrent/i,
   /timed? ?out/i, /timeout/i, /deadline/i,
   /rate limit/i, /quota/i, /too many/i, /try again/i, /coba lagi/i,
@@ -422,4 +423,135 @@ function RSC_UI_PAINT_STATUS_COLUMN_20260820_(sheet, firstRow, col, statuses, wi
   } catch (e) {
     return 0;
   }
+}
+
+/* -------------------------------------------------------------
+ * PEMBACAAN & PENULISAN SHEET BESAR
+ * -------------------------------------------------------------
+ * Google Sheets menolak satu request yang terlalu besar:
+ *   "Requested data exceeds the maximum allowed size. Please get a smaller
+ *    range of cells."
+ * Template rolling nyata punya 50.708 baris berformat walau datanya hanya
+ * ~1.400 baris, sehingga satu getValues() atas seluruh sheet selalu gagal dan
+ * file tidak pernah selesai divalidasi. Semua akses dipotong per blok, dan
+ * ukuran bloknya mengecil sendiri bila masih terlalu besar.
+ * ----------------------------------------------------------- */
+
+function rscIsOversizedRangeError_(err) {
+  var msg = (err && err.message) ? String(err.message) : String(err);
+  return /maximum allowed size|smaller range of cells|too large|exceeds/i.test(msg);
+}
+
+/** Baca satu kolom sebagai teks, per blok. Dipakai untuk mencari baris terakhir. */
+function rscReadColumnChunked_(sheet, col, firstRow, numRows) {
+  var V = RSC_STANDARD_VALIDATION_V27_20260814;
+  var step = V.probeChunkRows || 20000;
+  var out = [], r = 0;
+  while (r < numRows) {
+    var n = Math.min(step, numRows - r);
+    try {
+      var block = sheet.getRange(firstRow + r, col, n, 1).getDisplayValues();
+      for (var i = 0; i < block.length; i++) out.push(block[i][0]);
+      r += n;
+    } catch (e) {
+      if (rscIsOversizedRangeError_(e) && step > (V.minChunkRows || 100)) {
+        step = Math.max(V.minChunkRows || 100, Math.floor(step / 4));
+        continue;
+      }
+      throw e;
+    }
+  }
+  return out;
+}
+
+/**
+ * Baris data terakhir yang sebenarnya. getLastRow() ikut menghitung baris yang
+ * hanya punya format atau dropdown, jadi tidak bisa dipakai apa adanya.
+ */
+function rscLastDataRow_(sheet, spec) {
+  var V = RSC_STANDARD_VALIDATION_V27_20260814;
+  var last = sheet.getLastRow();
+  if (last < 2) return 1;
+  var cols = (V.probeColumns && V.probeColumns[spec.key]) || [1];
+  var best = 1;
+  for (var c = 0; c < cols.length; c++) {
+    var col = cols[c];
+    if (col > sheet.getMaxColumns()) continue;
+    var vals = rscReadColumnChunked_(sheet, col, 2, last - 1);
+    for (var i = vals.length - 1; i >= 0; i--) {
+      if (rscText_(vals[i])) { if (i + 2 > best) best = i + 2; break; }
+    }
+  }
+  return best;
+}
+
+/** Baca rentang persegi per blok baris. */
+function rscReadValuesChunked_(sheet, firstRow, firstCol, numRows, numCols) {
+  var V = RSC_STANDARD_VALIDATION_V27_20260814;
+  var step = V.readChunkRows || 5000;
+  var out = [], r = 0;
+  while (r < numRows) {
+    var n = Math.min(step, numRows - r);
+    try {
+      var block = sheet.getRange(firstRow + r, firstCol, n, numCols).getValues();
+      for (var i = 0; i < block.length; i++) out.push(block[i]);
+      r += n;
+    } catch (e) {
+      if (rscIsOversizedRangeError_(e) && step > (V.minChunkRows || 100)) {
+        step = Math.max(V.minChunkRows || 100, Math.floor(step / 4));
+        continue;
+      }
+      throw e;
+    }
+  }
+  return out;
+}
+
+function rscIsValidationRejectError_(err) {
+  var msg = (err && err.message) ? String(err.message) : String(err);
+  return /data validation|validasi data|dropdown|please select a value|pilih .* dari|invalid data|masukkan nilai/i.test(msg);
+}
+
+/**
+ * Tulis nilai per blok, dan sembuhkan sendiri bila ditolak data validation.
+ *
+ * Template lama memasang aturan list "reject input" pada kolom Schedule Visit
+ * yang formula sumbernya sudah menjadi #REF!, sehingga TIDAK ADA nilai yang
+ * diterima dan setiap setValues() gagal dengan
+ *   "Pilih Schedule Visit dari dropdown."
+ * Aturan rusak itu dibuang lalu penulisan diulang; dropdown yang benar
+ * dipasang kembali sesudahnya oleh rscApplyTemplateDropdowns_.
+ */
+function rscSetValuesChunked_(sheet, firstRow, firstCol, values, stats) {
+  if (!values || !values.length) return 0;
+  var V = RSC_STANDARD_VALIDATION_V27_20260814;
+  var step = V.writeChunkRows || 5000;
+  var numCols = values[0].length;
+  var r = 0, repaired = 0;
+  while (r < values.length) {
+    var n = Math.min(step, values.length - r);
+    var block = values.slice(r, r + n);
+    var rng = sheet.getRange(firstRow + r, firstCol, n, numCols);
+    try {
+      rng.setValues(block);
+      r += n;
+    } catch (e) {
+      if (rscIsOversizedRangeError_(e) && step > (V.minChunkRows || 100)) {
+        step = Math.max(V.minChunkRows || 100, Math.floor(step / 4));
+        continue;
+      }
+      if (rscIsValidationRejectError_(e)) {
+        try {
+          rng.setDataValidation(null);
+          rng.setValues(block);
+          repaired += n;
+          r += n;
+          continue;
+        } catch (e2) { throw e2; }
+      }
+      throw e;
+    }
+  }
+  if (stats && repaired) stats.validationRepairedRows = (stats.validationRepairedRows || 0) + repaired;
+  return repaired;
 }

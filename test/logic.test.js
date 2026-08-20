@@ -825,6 +825,89 @@ section('L19. onOpen MEMBANGUN MENU');
 }
 
 /* ===================================================================== */
+section('L20. REGRESI PRODUKSI — TEMPLATE 50.000 BARIS & DROPDOWN RUSAK');
+{
+  // Template nyata (STA Sagaranten): 50.708 baris berformat, data asli ~1.400,
+  // dan kolom K memakai aturan list "reject input" dengan formula #REF!.
+  function bigTemplate(opts) {
+    opts = opts || {};
+    const w = buildWorld({ dbPadding: 0 });
+    w.env.files.delete('DB_MASTER_ID');
+    w.env.setClock('2026-08-20T00:00:00Z');
+    w.env.addFile(buildDb());
+    const child = new FakeSpreadsheet('BIGFILE', 'Template Rolling Sales STA Sagaranten');
+    const header = ENV.spec.header.slice();
+    const rows = [header];
+    for (let i = 0; i < (opts.dataRows === undefined ? 40 : opts.dataRows); i++) {
+      rows.push(baseRow({ [C.CUST]: '110094788', [C.TYPE]: String((i % 12) + 1).padStart(2, '0') }).slice(0, 16));
+    }
+    // Baris berformat tanpa data, persis seperti template asli.
+    for (let i = 0; i < (opts.blankRows === undefined ? 2000 : opts.blankRows); i++) {
+      rows.push(new Array(16).fill(''));
+    }
+    const sh = child.addSheet('Change Rolling & Change Schedul', rows);
+    sh.lastRowOverride = rows.length;
+    w.env.addFile(child);
+    if (opts.maxCells) w.env.maxCellsPerRequest = opts.maxCells;
+    if (opts.rejectK) sh.rejectValidation = { 11: 'Pilih Schedule Visit dari dropdown.' };
+    const g = loadScript(w.env, { dbId: DB_ID, dateNew: DATE_NEW, dateClose: DATE_CLOSE });
+    return { w, g, child, sh, spec: g.rscPrimarySpec_(), masters: g.rscLoadMasters_(w.master) };
+  }
+
+  // (a) baris data terakhir yang sebenarnya, bukan getLastRow()
+  const a = bigTemplate({});
+  eq('getLastRow ikut menghitung baris kosong', a.sh.getLastRow(), 2041);
+  eq('baris data terakhir yang sebenarnya', a.g.rscLastDataRow_(a.sh, a.spec), 41);
+
+  // (b) satu request besar ditolak Sheets, pembacaan berblok tetap berhasil
+  const b = bigTemplate({ maxCells: 4000 });
+  let threw = false;
+  try { b.sh.getRange(2, 1, 2040, 16).getValues(); } catch (e) { threw = /maximum allowed size/.test(e.message); }
+  ok('satu request besar memang ditolak Sheets', threw);
+  const rows = b.g.rscReadValuesChunked_(b.sh, 2, 1, 40, 16);
+  eq('pembacaan berblok mengembalikan semua baris', rows.length, 40);
+  eq('isi baris pertama utuh', rows[0][2], '110094788');
+
+  // (c) penulisan menabrak dropdown rusak -> aturan dibuang lalu ditulis ulang
+  const c = bigTemplate({ rejectK: true });
+  let rejected = false;
+  try { c.sh.getRange(2, 1, 1, 14).setValues([baseRow({}).slice(0, 14)]); }
+  catch (e) { rejected = /Pilih Schedule Visit dari dropdown/.test(e.message); }
+  ok('dropdown rusak memang menolak penulisan', rejected);
+  const stats = {};
+  c.g.rscSetValuesChunked_(c.sh, 2, 1, [baseRow({ [C.CUST]: '110221303' }).slice(0, 14)], stats);
+  eq('penulisan berhasil setelah aturan dibuang', c.sh.getRange(2, 3).getDisplayValue(), '110221303');
+  eq('perbaikan tercatat', stats.validationRepairedRows, 1);
+
+  // (d) pipeline penuh pada file besar + dropdown rusak: harus selesai, bukan FATAL
+  const d = bigTemplate({ maxCells: 4000, rejectK: true });
+  const sh = d.child.getSheetByName('Change Rolling & Change Schedul');
+  const dataRows = d.g.rscLastDataRow_(sh, d.spec) - 1;
+  const vals = d.g.rscReadValuesChunked_(sh, 2, 1, dataRows, 16);
+  const res = d.g.rscValidateValues_(d.spec, vals, d.masters);
+  d.g.rscWriteResults_(sh, d.spec, res, dataRows);
+  eq('semua baris data divalidasi', res.rowCount, 40);
+  ok('status tertulis di kolom O meski dropdown menolak',
+     ['OK', 'ERROR'].indexOf(sh.getRange(2, 15).getDisplayValue()) >= 0,
+     sh.getRange(2, 15).getDisplayValue());
+  eq('baris terakhir juga tertulis', sh.getRange(41, 15).getDisplayValue() !== '', 'true');
+
+  // (e) dropdown diperbaiki permanen: aturan baru tidak menolak apa pun
+  d.g.rscApplyTemplateDropdowns_(sh, d.spec, d.masters);
+  let stillRejects = false;
+  try { sh.getRange(3, 11, 1, 1).setValues([['W1M,W3M']]); }
+  catch (e) { stillRejects = true; }
+  ok('kolom Schedule Visit tidak menolak lagi', !stillRejects);
+  eq('token dropdown lengkap 28', d.g.rscScheduleTokenOptions_().length, 28);
+  ok('mencakup W4SU', d.g.rscScheduleTokenOptions_().indexOf('W4SU') >= 0);
+
+  // (f) error ukuran range diklasifikasi INFRA, bukan FATAL (tidak menambah Attempts)
+  const kind = ENV.g.rscClassify_(new Error(
+    'Requested data exceeds the maximum allowed size. Please get a smaller range of cells.'));
+  eq('oversized range = INFRA', kind.kind, 'INFRA');
+}
+
+/* ===================================================================== */
 console.log('\n' + '='.repeat(70));
 console.log('HASIL LOGIC PERF26: ' + PASS + ' lulus, ' + FAIL.length + ' gagal');
 if (FAIL.length) { FAIL.forEach(f => console.log('  - ' + f)); process.exit(1); }

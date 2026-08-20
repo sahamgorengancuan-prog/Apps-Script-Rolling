@@ -116,13 +116,16 @@ var RSC_DB_PARAMETERS = {
     name: ['bp_name', 'name']
   },
   visitHeaders: {
-    customer: ['cust_id', 'customer_id', 'bp_id'],
-    salesman: ['salesman_id', 'bp_id_rlt2'],
-    visitCategory: ['visit_category'],
-    visitType: ['visit_type'],
-    schedule: ['visit_schedule', 'schedule_visit'],
-    validFrom: ['visit_valid_from', 'valid_from', 'from_timestamp'],
-    validTo: ['visit_valid_to', 'valid_to', 'to_timestamp']
+    customer: ['cust_id', 'customer_id', 'bp_id', 'bp_id_rlt1', 'partner'],
+    salesman: ['salesman_id', 'bp_id_rlt2', 'sales_id', 'employee_id'],
+    visitCategory: ['visit_category', 'visit_cat', 'visit_category_id', 'frequency', 'freq'],
+    visitType: ['visit_type', 'visit_type_id', 'type'],
+    schedule: ['visit_schedule', 'schedule_visit', 'schedule', 'visit_day'],
+    validFrom: ['visit_valid_from', 'valid_from', 'from_timestamp', 'start_date',
+                'effective_date', 'visit_start_date', 'date_from', 'valid_from_date',
+                'begin_date', 'start_timestamp'],
+    validTo: ['visit_valid_to', 'valid_to', 'to_timestamp', 'end_date',
+              'visit_end_date', 'date_to', 'valid_to_date', 'end_timestamp']
   },
 
   // Baris yang masa berlakunya sudah lewat lebih dari grace ini tidak diindeks.
@@ -484,6 +487,23 @@ var RSC_STANDARD_VALIDATION_V27_20260814 = {
   masterLinkCol: 5,
   firstDataRow: 2,
   masterHeaderScanRows: 30,
+
+  // Pembacaan/penulisan sheet anak dipotong per blok baris. Tanpa ini,
+  // template dengan 50.000+ baris memicu:
+  //   "Requested data exceeds the maximum allowed size."
+  // yang membuat file tidak pernah selesai divalidasi.
+  readChunkRows: 5000,
+  writeChunkRows: 5000,
+  minChunkRows: 100,
+
+  // Kolom penanda untuk mencari baris data terakhir yang sebenarnya.
+  // getLastRow() ikut menghitung baris yang hanya berformat/berdropdown,
+  // sehingga bisa melaporkan 50.708 padahal datanya cuma ~1.400 baris.
+  probeColumns: { ROLLING: [1, 3, 5], SALES_OFFICE: [1, 5, 6], SALESMAN_TYPE: [1, 2, 3] },
+  probeChunkRows: 20000,
+
+  // Dropdown tidak dipasang ulang bila area datanya sangat besar.
+  dropdownMaxRows: 20000,
   manifestSheetName: '_RSC_VALIDATION_MANIFEST_V27',
   manifestHeaders: [
     'Run ID', 'File ID', 'Master Rows JSON', 'URL', 'File Name', 'Status', 'Attempts', 'Worker', 'Lease Until',

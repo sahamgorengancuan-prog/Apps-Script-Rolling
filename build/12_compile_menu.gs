@@ -445,8 +445,8 @@ function RSC_V28_2_AUTO_VALIDATE_WORKER_20260814() {
   var needCols = Math.max(spec.errorCol, spec.header.length);
   var width = Math.max(needCols, target.getLastColumn() || needCols);
   if (rscCheckLayout_(spec, target.getRange(1, 1, 1, width).getDisplayValues()[0])) return { skipped: true };
-  var dataRows = Math.max(0, target.getLastRow() - 1);
-  var values = dataRows ? target.getRange(2, 1, dataRows, needCols).getValues() : [];
+  var dataRows = Math.max(0, rscLastDataRow_(target, spec) - 1);
+  var values = dataRows ? rscReadValuesChunked_(target, 2, 1, dataRows, needCols) : [];
   var res = rscValidateValues_(spec, values, masters);
   rscWriteResults_(target, spec, res, dataRows);
   rscSetProp_(C.pAutoValidateLastResult,

@@ -282,6 +282,59 @@ langsung dari menu.
 
 ---
 
+## 6b. Tiga kegagalan produksi yang sudah diperbaiki
+
+Dari log Job Logging run `2801cf29` (20 Agustus 2026, 64 task):
+
+### `[FATAL] Pilih Schedule Visit dari dropdown.`
+
+Bukan business error. Template lama memasang data validation pada kolom K:
+
+```xml
+<dataValidation type="list" showErrorMessage="1"
+  prompt="Pilih Schedule Visit dari dropdown."
+  sqref="K30:K51 K59:K155 ... K1163:K10706 K10708:K50708">
+  <formula1>#REF!</formula1>
+```
+
+`showErrorMessage="1"` berarti **tolak input**, sedangkan daftar nilainya
+`#REF!` — jadi **tidak ada nilai apa pun yang diterima**. Setiap `setValues()`
+ke kolom K gagal. Ini baru muncul sejak engine menulis kembali baris A:N hasil
+mutasi; versi sebelumnya hanya menulis O:P yang tidak punya validation.
+
+Dua lapis perbaikan:
+1. `rscSetValuesChunked_` menangkap penolakan itu, membuang aturan rusak pada
+   rentang yang ditulis, lalu mengulang penulisan, dan mencatat jumlah baris
+   yang diperbaiki.
+2. `rscApplyTemplateDropdowns_` sekarang juga memasang kolom K dengan 28 token
+   sah (`W1M`…`W4SU`) dan `setAllowInvalid(true)`, sehingga template sembuh
+   permanen dan tidak pernah menolak penulisan lagi.
+
+### `[INFRA] Requested data exceeds the maximum allowed size.`
+
+Template STA Sagaranten punya **50.708 baris berformat sampai kolom W**,
+padahal datanya jauh lebih sedikit. `getLastRow()` mengembalikan 50.708,
+sehingga satu `getValues()` meminta ~800.000 sel dan selalu ditolak Sheets.
+File-file itu berputar di `DB contention deferred` tanpa pernah selesai.
+
+Perbaikan:
+- `rscLastDataRow_` mencari baris data terakhir yang sebenarnya lewat probe
+  kolom penanda (Sales Office, Customer ID, Salesman ID) yang dibaca per blok.
+- `rscReadValuesChunked_` / `rscSetValuesChunked_` memotong akses per 5.000
+  baris dan mengecilkan blok sendiri bila masih terlalu besar.
+- Pewarnaan status juga dipotong per blok.
+- Pola pesan itu ditambahkan ke `RSC_INFRA_PATTERNS`, jadi kalaupun terjadi
+  ia tetap DEFERRED (Attempts tidak bertambah), bukan HARD_ERROR.
+
+### `VISIT=n/a:KEY_COLUMN_MISSING`
+
+Alias kolom `m_visit_schedule` diperluas (`start_date`, `effective_date`,
+`visit_start_date`, `date_from`, `begin_date`, …). Bila masih tidak cocok,
+menu **Diagnose DB Access / Identity** kini mencetak **nama kolom asli** tabel
+itu, sehingga aliasnya bisa disesuaikan tepat di `RSC_DB_PARAMETERS`.
+
+---
+
 ## 7. Yang perlu dikonfirmasi sebelum dipakai penuh
 
 Tiga subsistem diimplementasi ulang berdasarkan spesifikasi yang bisa saya baca,

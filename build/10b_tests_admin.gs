@@ -297,8 +297,8 @@ function RSC_PERF10_BENCHMARK_ACTIVE_ROLLING_20260819() {
   var masters = rscLoadMasters_(ss);
   var tM = Date.now();
   var needCols = Math.max(spec.errorCol, spec.header.length);
-  var dataRows = Math.max(0, sh.getLastRow() - 1);
-  var values = dataRows ? sh.getRange(2, 1, dataRows, needCols).getValues() : [];
+  var dataRows = Math.max(0, rscLastDataRow_(sh, spec) - 1);
+  var values = dataRows ? rscReadValuesChunked_(sh, 2, 1, dataRows, needCols) : [];
   var tR = Date.now();
   var res = rscValidateValues_(spec, values, masters);
   var tV = Date.now();

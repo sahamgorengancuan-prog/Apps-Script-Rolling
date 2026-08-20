@@ -1420,7 +1420,7 @@ function RSC_V28_3_WRITE_ROLLING_SNAPSHOT_20260814_(sheet, spec, result, dataRow
       while (i + 1 < pending.length && pending[i + 1].row === pending[i].row + 1) i++;
       var block = [];
       for (var k = start; k <= i; k++) block.push(pending[k].values);
-      sheet.getRange(pending[start].row, 1, block.length, spec.dataCols).setValues(block);
+      rscSetValuesChunked_(sheet, pending[start].row, 1, block, result);
       i++;
     }
   }
@@ -1432,12 +1432,12 @@ function RSC_V28_3_WRITE_ROLLING_SNAPSHOT_20260814_(sheet, spec, result, dataRow
     if (pos >= 0 && pos < dataRowCount) out[pos] = [result.status[r], result.detail[r]];
   }
   if (spec.errorCol === spec.statusCol + 1) {
-    sheet.getRange(2, spec.statusCol, dataRowCount, 2).setValues(out);
+    rscSetValuesChunked_(sheet, 2, spec.statusCol, out, result);
   } else {
     var s = [], d = [];
     for (var q = 0; q < out.length; q++) { s.push([out[q][0]]); d.push([out[q][1]]); }
-    sheet.getRange(2, spec.statusCol, dataRowCount, 1).setValues(s);
-    sheet.getRange(2, spec.errorCol, dataRowCount, 1).setValues(d);
+    rscSetValuesChunked_(sheet, 2, spec.statusCol, s, result);
+    rscSetValuesChunked_(sheet, 2, spec.errorCol, d, result);
   }
   rscApplyStatusColors_(sheet, spec, out, dataRowCount);
   return dataRowCount;
@@ -1461,12 +1461,16 @@ function rscApplyStatusColors_(sheet, spec, out, dataRowCount) {
       fc.push([paint.font, paint.font]);
       fw.push([paint.bold ? 'bold' : 'normal', 'normal']);
     }
-    if (spec.errorCol === spec.statusCol + 1) {
-      var rng = sheet.getRange(2, spec.statusCol, dataRowCount, 2);
-      rng.setBackgrounds(bg);
-      if (rng.setFontColors) rng.setFontColors(fc);
-      if (rng.setFontWeights) rng.setFontWeights(fw);
-      var det = sheet.getRange(2, spec.errorCol, dataRowCount, 1);
+    if (spec.errorCol !== spec.statusCol + 1) return;
+    var V = RSC_STANDARD_VALIDATION_V27_20260814;
+    var step = V.writeChunkRows || 5000;
+    for (var r0 = 0; r0 < dataRowCount; r0 += step) {
+      var n = Math.min(step, dataRowCount - r0);
+      var rng = sheet.getRange(2 + r0, spec.statusCol, n, 2);
+      rng.setBackgrounds(bg.slice(r0, r0 + n));
+      if (rng.setFontColors) rng.setFontColors(fc.slice(r0, r0 + n));
+      if (rng.setFontWeights) rng.setFontWeights(fw.slice(r0, r0 + n));
+      var det = sheet.getRange(2 + r0, spec.errorCol, n, 1);
       if (det.setWrap) det.setWrap(true);
     }
   } catch (e) { /* warna bersifat kosmetik, tidak boleh menggagalkan validasi */ }

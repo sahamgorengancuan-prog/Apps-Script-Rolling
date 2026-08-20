@@ -462,7 +462,13 @@ function rscBuildHeaderIndex_(aliases, keySpecs, valSpecs, opts) {
   var keyIdx = [];
   for (var k = 0; k < keySpecs.length; k++) {
     var ci = rscPickCol_(hmap, keySpecs[k]);
-    if (ci < 0) return { available: false, reason: 'KEY_COLUMN_MISSING', map: {}, rows: 0, sheet: sh.getName() };
+    if (ci < 0) {
+      return {
+        available: false, reason: 'KEY_COLUMN_MISSING', map: {}, rows: 0, sheet: sh.getName(),
+        wantedAliases: keySpecs[k].slice(),
+        actualHeaders: header.slice(0, 40).filter(function (h) { return rscText_(h) !== ''; })
+      };
+    }
     keyIdx.push(ci);
   }
   var valIdx = [], fields = [], fieldPresent = {};

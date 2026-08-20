@@ -1,6 +1,6 @@
 {
   "name": "rolling-sales-center",
-  "version": "29.2.0",
+  "version": "29.4.0",
   "private": true,
   "description": "Integrated validation engine untuk Rolling Sales Center (Google Apps Script)",
   "scripts": {

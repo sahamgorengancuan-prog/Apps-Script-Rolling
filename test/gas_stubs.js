@@ -72,12 +72,27 @@ class FakeRange {
     }
     return out;
   }
-  getValues() { return this._read(); }
-  getDisplayValues() { return this._read().map(r => r.map(v => (v === null || v === undefined) ? '' : String(v))); }
+  _guardSize() {
+    const cap = this.sheet.ss.env && this.sheet.ss.env.maxCellsPerRequest;
+    if (cap && this.numRows * this.numCols > cap) {
+      throw new Error('Requested data exceeds the maximum allowed size. Please get a smaller range of cells.');
+    }
+  }
+  getValues() { this._guardSize(); return this._read(); }
+  getDisplayValues() { this._guardSize(); return this._read().map(r => r.map(v => (v === null || v === undefined) ? '' : String(v))); }
   getValue() { return this._read()[0][0]; }
   getDisplayValue() { const v = this._read()[0][0]; return v === null || v === undefined ? '' : String(v); }
   setValues(vals) {
     METRICS.setValuesCalls++;
+    this._guardSize();
+    // Simulasi aturan data validation "reject input" yang rusak.
+    const reject = this.sheet.rejectValidation;
+    if (reject) {
+      for (let c = 0; c < this.numCols; c++) {
+        const col = this.col + c;
+        if (reject[col]) throw new Error(reject[col]);
+      }
+    }
     if (vals.length !== this.numRows) throw new Error('setValues row mismatch: got ' + vals.length + ' want ' + this.numRows);
     for (let r = 0; r < vals.length; r++) {
       if (vals[r].length !== this.numCols) throw new Error('setValues col mismatch at row ' + r + ': got ' + vals[r].length + ' want ' + this.numCols);
@@ -104,7 +119,15 @@ class FakeRange {
   getFormulas() {
     return this._read().map(r => r.map(v => (typeof v === 'string' && v.charAt(0) === '=') ? v : ''));
   }
-  setDataValidation() { return this; }
+  setDataValidation(rule) {
+    if (rule === null && this.sheet.rejectValidation) {
+      for (let c = 0; c < this.numCols; c++) delete this.sheet.rejectValidation[this.col + c];
+    }
+    if (rule && rule.allowInvalid && this.sheet.rejectValidation) {
+      for (let c = 0; c < this.numCols; c++) delete this.sheet.rejectValidation[this.col + c];
+    }
+    return this;
+  }
   // Format disimpan supaya pewarnaan status bisa diperiksa oleh test.
   _fmt(kind, r, c) {
     const key = kind + ':' + (this.row + r) + ':' + (this.col + c);
@@ -173,7 +196,7 @@ class FakeSheet {
   setName(n) { this.name = n; return this; }
   getSheetId() { if (this._id === undefined) this._id = Math.floor(Math.random() * 1e9); return this._id; }
   setFrozenColumns(n) { this.frozenCols = n; return this; }
-  getLastRow() { return this._lastRow; }
+  getLastRow() { return this.lastRowOverride || this._lastRow; }
   getLastColumn() { return this._lastCol; }
   getMaxRows() { return Math.max(this.data.length, this._lastRow); }
   getMaxColumns() { return Math.max(this._lastCol, 30); }
@@ -234,7 +257,7 @@ class Environment {
   advance(ms) { this.clockOffsetMs += ms; return this.clockOffsetMs; }
   /** Kunci jam virtual ke tanggal tertentu agar uji tidak bergantung wall-clock. */
   setClock(iso) { this.clockOffsetMs = Date.parse(iso) - Date.now(); return this.clockOffsetMs; }
-  addFile(ss) { this.files.set(ss.getId(), ss); return ss; }
+  addFile(ss) { ss.env = this; this.files.set(ss.getId(), ss); return ss; }
   setActive(id) { this.activeId = id; }
 }
 
@@ -265,11 +288,12 @@ function buildGlobals(env) {
     },
     getActiveSpreadsheet() { return env.files.get(env.activeId) || null; },
     newDataValidation() {
+      const state = { allowInvalid: false, items: null, help: '' };
       const b = {
-        requireValueInList() { return b; },
-        setAllowInvalid() { return b; },
-        setHelpText() { return b; },
-        build() { return {}; }
+        requireValueInList(items) { state.items = items; return b; },
+        setAllowInvalid(v) { state.allowInvalid = v !== false; return b; },
+        setHelpText(t) { state.help = t; return b; },
+        build() { return { allowInvalid: state.allowInvalid, items: state.items, help: state.help }; }
       };
       return b;
     },

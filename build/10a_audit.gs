@@ -223,7 +223,10 @@ function RSC_PERF11_DIAGNOSE_DB_ACCESS_20260819() {
           (idx.mode ? (', mode=' + idx.mode) : ''));
       } else {
         res.push('--  ' + tables[t] + ' TIDAK DITEMUKAN (' + ((idx && idx.reason) || '-') + ')' +
-          '\n    alias dicari: ' + alias +
+          '\n    alias tabel dicari: ' + alias +
+          (idx && idx.sheet ? ('\n    tab ditemukan   : ' + idx.sheet) : '') +
+          (idx && idx.wantedAliases ? ('\n    kolom dicari    : ' + idx.wantedAliases.join(', ')) : '') +
+          (idx && idx.actualHeaders ? ('\n    header asli     : ' + idx.actualHeaders.join(' | ')) : '') +
           '\n    rule terkait akan DILEWATI, bukan dijadikan error.');
       }
     } catch (eT) {

@@ -31,8 +31,8 @@ function RSC_STANDARD_VALIDATE_ACTIVE_SHEET_20260814() {
   if (layoutErr) return rscAlert_('Layout tidak sesuai', layoutErr);
 
   rscEnsureResultHeaders_(sh, spec);
-  var dataRows = Math.max(0, sh.getLastRow() - 1);
-  var values = dataRows ? sh.getRange(2, 1, dataRows, needCols).getValues() : [];
+  var dataRows = Math.max(0, rscLastDataRow_(sh, spec) - 1);
+  var values = dataRows ? rscReadValuesChunked_(sh, 2, 1, dataRows, needCols) : [];
   var res = rscValidateValues_(spec, values, masters);
   rscWriteResults_(sh, spec, res, dataRows);
   rscApplyTemplateDropdowns_(sh, spec, masters);

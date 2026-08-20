@@ -42,12 +42,14 @@ function rscProcessTask_(task, masters, onStage) {
     if (layoutErr) { layoutProblems.push(sh.getName() + ' :: ' + layoutErr); continue; }
 
     rscEnsureResultHeaders_(sh, spec);
-    var dataRows = Math.max(0, sh.getLastRow() - 1);
+    // Baris data yang sebenarnya, bukan getLastRow() yang ikut menghitung
+    // baris berformat/berdropdown sampai 50.708.
+    var dataRows = Math.max(0, rscLastDataRow_(sh, spec) - 1);
 
     // getValues (bukan getDisplayValues) supaya sel tanggal terbaca sebagai
     // objek Date. Format tampilan bergantung locale dan bisa membuat
     // 01/08/2026 terbaca sebagai 8 Januari.
-    var values = dataRows ? sh.getRange(2, 1, dataRows, needCols).getValues() : [];
+    var values = dataRows ? rscReadValuesChunked_(sh, 2, 1, dataRows, needCols) : [];
 
     var res = rscValidateValues_(spec, values, masters);
     normSec += res.timing.normalizeSec;
@@ -87,6 +89,25 @@ function rscProcessTask_(task, masters, onStage) {
 }
 
 /** Segarkan dropdown template sesuai master. Kosmetik; kegagalan diabaikan. */
+/** Semua token Schedule Visit yang sah: W1..W4 x M/T/W/TH/F/S/SU. */
+function rscScheduleTokenOptions_() {
+  var out = [];
+  for (var w = 1; w <= 4; w++) {
+    for (var d = 0; d < VISIT_DAYS.length; d++) out.push('W' + w + VISIT_DAYS[d]);
+  }
+  return out;
+}
+
+/**
+ * Pasang dropdown template.
+ *
+ * PENTING: semua aturan memakai setAllowInvalid(true) sehingga tidak pernah
+ * MENOLAK penulisan. Template lama memasang aturan "reject input" pada kolom
+ * Schedule Visit yang formula sumbernya sudah menjadi #REF!, sehingga tidak ada
+ * nilai yang diterima dan setiap penulisan gagal dengan
+ * "Pilih Schedule Visit dari dropdown.". Memasang ulang kolom K di sini
+ * menyembuhkan template itu secara permanen.
+ */
 function rscApplyTemplateDropdowns_(sheet, spec, masters) {
   if (spec.key !== 'ROLLING') return;
   var V = RSC_STANDARD_VALIDATION_V27_20260814;
@@ -95,6 +116,7 @@ function rscApplyTemplateDropdowns_(sheet, spec, masters) {
     Math.max(sheet.getMaxRows(), 2));
   var n = lastRow - 1;
   if (n < 1) return;
+  if (n > (V.dropdownMaxRows || 20000)) n = V.dropdownMaxRows || 20000;
 
   function listRule(items, help) {
     return SpreadsheetApp.newDataValidation()
@@ -123,6 +145,10 @@ function rscApplyTemplateDropdowns_(sheet, spec, masters) {
       listRule(VISIT_TYPE_OPTIONS.slice(), 'Visit Type hanya 01 sampai 12. Gunakan format 2 digit.'));
     sheet.getRange(2, 14, n, 1).setDataValidation(
       listRule(REASON_OPTIONS.slice(), 'Reason hanya Rolling atau Toko Bangkrut.'));
+    // Kolom K: mengganti aturan lama yang rusak (#REF!) dan menolak input.
+    sheet.getRange(2, 11, n, 1).setDataValidation(
+      listRule(rscScheduleTokenOptions_(),
+        'Pilih Schedule Visit dari dropdown. Token W1M sampai W4SU, dipisah koma.'));
   } catch (e) { /* dropdown kosmetik */ }
 }
 
