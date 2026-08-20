@@ -1,9 +1,9 @@
 {
   "name": "rolling-sales-center",
-  "version": "29.1.0",
+  "version": "29.2.0",
   "private": true,
   "description": "Integrated validation engine untuk Rolling Sales Center (Google Apps Script)",
   "scripts": {
-    "test": "node test/e2e.test.js && node test/scale.test.js && node test/db.test.js && node test/features.test.js"
+    "test": "node test/logic.test.js && node test/e2e.test.js && node test/scale.test.js && node test/db.test.js && node test/features.test.js"
   }
 }

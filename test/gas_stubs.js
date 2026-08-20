@@ -76,10 +76,43 @@ class FakeRange {
     return this._read().map(r => r.map(v => (typeof v === 'string' && v.charAt(0) === '=') ? v : ''));
   }
   setDataValidation() { return this; }
-  setBackground() { return this; }
-  setBackgrounds() { return this; }
-  setFontColor() { return this; }
-  setFontWeight() { return this; }
+  // Format disimpan supaya pewarnaan status bisa diperiksa oleh test.
+  _fmt(kind, r, c) {
+    const key = kind + ':' + (this.row + r) + ':' + (this.col + c);
+    return this.sheet.formats[key] === undefined ? null : this.sheet.formats[key];
+  }
+  _setFmt(kind, r, c, v) { this.sheet.formats[kind + ':' + (this.row + r) + ':' + (this.col + c)] = v; }
+  _fill(kind, v) {
+    for (let r = 0; r < this.numRows; r++) for (let c = 0; c < this.numCols; c++) this._setFmt(kind, r, c, v);
+    return this;
+  }
+  _grid(kind, vals) {
+    for (let r = 0; r < vals.length; r++) {
+      for (let c = 0; c < vals[r].length; c++) this._setFmt(kind, r, c, vals[r][c]);
+    }
+    return this;
+  }
+  _readFmt(kind) {
+    const out = [];
+    for (let r = 0; r < this.numRows; r++) {
+      const line = [];
+      for (let c = 0; c < this.numCols; c++) line.push(this._fmt(kind, r, c));
+      out.push(line);
+    }
+    return out;
+  }
+  setBackground(v) { return this._fill('bg', v); }
+  setBackgrounds(v) { return this._grid('bg', v); }
+  getBackgrounds() { return this._readFmt('bg'); }
+  getBackground() { return this._fmt('bg', 0, 0); }
+  setFontColor(v) { return this._fill('fc', v); }
+  setFontColors(v) { return this._grid('fc', v); }
+  getFontColors() { return this._readFmt('fc'); }
+  setFontWeight(v) { return this._fill('fw', v); }
+  setFontWeights(v) { return this._grid('fw', v); }
+  getFontWeights() { return this._readFmt('fw'); }
+  setWrap(v) { return this._fill('wrap', v); }
+  getWraps() { return this._readFmt('wrap'); }
   setNumberFormat() { return this; }
   clear() { return this.clearContent(); }
   setNote() { return this; }
@@ -91,6 +124,7 @@ class FakeSheet {
     this.ss = ss; this.name = name;
     this.data = (data || []).map(r => r.slice());
     this.hidden = false; this.frozen = 0;
+    this.formats = Object.create(null);   // 'bg:row:col' -> nilai
     this._recalcBounds();
   }
   _ensureRow(i) { while (this.data.length <= i) this.data.push([]); if (!this.data[i]) this.data[i] = []; }

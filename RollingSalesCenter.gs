@@ -77,7 +77,15 @@ var RSC_DB_PARAMETERS = {
     RELATION:  ['m_bp_relation'],
     SALESMAN:  ['m_sales_info'],
     BP:        ['m_bp_general_view', 'm_bp_general', '_rsc_bp_general_lookup'],
-    VISIT:     ['m_visit_schedule']
+    VISIT:     ['m_visit_schedule'],
+    RELTYPE:   ['m_rel_salesman_type_rlt']
+  },
+
+  // Master Relationship (opsional). Bila tabel tidak ada, daftar canonical
+  // ZWS001..ZWS022 + BUR001 di RELATIONSHIP_OPTIONS yang dipakai.
+  relTypeHeaders: {
+    id: ['rlt_id', 'relationship_cat_id', 'rel_id'],
+    desc: ['rlt_desc', 'description', 'desc']
   },
 
   // Header m_bp_relation mode LEGACY (5 kolom).
@@ -256,12 +264,188 @@ var TEMPLATE_UI_PARAMETERS = {
   }
 };
 
+/* -------------------------------------------------------------
+ * KODE WARNA STATUS (dipakai O:P, manifest, dashboard, rekap)
+ * -------------------------------------------------------------
+ *   OK / ALL OK / COMPLETE OK / DONE   -> HIJAU
+ *   ERROR / HARD ERROR / GAGAL         -> MERAH
+ *   IN PROGRESS / WORKER / ACTIVE      -> KUNING
+ *   QUEUE / QUEUED / ANTREAN           -> ORANGE
+ *   RETRY / DEFERRED / TERTUNDA        -> KUNING TUA
+ *   BLOCKED / INFRA                    -> BIRU
+ *   SKIPPED / STOPPED / DILEWATI       -> ABU
+ * ----------------------------------------------------------- */
+var RSC_UI_STATUS_COLORS_20260820 = {
+  GREEN:  { bg: '#B7E1CD', font: '#0B5D2E', bold: true },
+  RED:    { bg: '#F4C7C3', font: '#8B1A10', bold: true },
+  YELLOW: { bg: '#FFF2A8', font: '#7A5B00', bold: true },
+  ORANGE: { bg: '#FCD9A6', font: '#8A4B08', bold: true },
+  AMBER:  { bg: '#FFE0B2', font: '#8A4B08', bold: false },
+  BLUE:   { bg: '#D6E4F7', font: '#1E3A8A', bold: false },
+  GREY:   { bg: '#E5E7EB', font: '#4B5563', bold: false },
+  NONE:   { bg: null, font: null, bold: false }
+};
+
+/**
+ * Peta status -> warna. Kunci dicocokkan setelah rscKey_() sehingga
+ * "COMPLETE OK", "COMPLETE_OK", dan "complete-ok" bernilai sama.
+ */
+var RSC_UI_STATUS_MAP_20260820 = {
+  OK: 'GREEN', ALLOK: 'GREEN', COMPLETEOK: 'GREEN', DONE: 'GREEN', SELESAI: 'GREEN',
+  VALIDASIOK: 'GREEN', SUKSES: 'GREEN', PASS: 'GREEN', LULUS: 'GREEN', GREEN: 'GREEN',
+
+  ERROR: 'RED', HARDERROR: 'RED', COMPLETEWITHERRORS: 'RED', GAGAL: 'RED', FAILED: 'RED',
+  PERLUREVISI: 'RED', FATAL: 'RED', RED: 'RED',
+
+  ACTIVE: 'YELLOW', RUNNING: 'YELLOW', INPROGRESS: 'YELLOW', WORKER: 'YELLOW',
+  WORKING: 'YELLOW', VALIDATING: 'YELLOW', PROSES: 'YELLOW', BERJALAN: 'YELLOW',
+  CLAIMED: 'YELLOW', PREWARM: 'YELLOW', YELLOW: 'YELLOW',
+
+  QUEUED: 'ORANGE', QUEUE: 'ORANGE', ANTREAN: 'ORANGE', PENDING: 'ORANGE',
+  WAITING: 'ORANGE', MENUNGGU: 'ORANGE', ORANGE: 'ORANGE',
+
+  RETRY: 'AMBER', DEFERRED: 'AMBER', TERTUNDA: 'AMBER', DEFER: 'AMBER',
+
+  BLOCKEDINFRA: 'BLUE', BLOCKED: 'BLUE', INFRA: 'BLUE', PAUSED: 'BLUE',
+
+  SKIPPED: 'GREY', SKIPPEDINVALID: 'GREY', DILEWATI: 'GREY', STOPPED: 'GREY',
+  STOP: 'GREY', IDLE: 'GREY', HARDSTOP: 'GREY', CANCELLED: 'GREY'
+};
+
+/** Kata kunci yang dicari bila status berupa kalimat panjang (kolom Feedback). */
+var RSC_UI_STATUS_KEYWORDS_20260820 = [
+  ['VALIDASIOK', 'GREEN'], ['ALLOK', 'GREEN'], ['COMPLETEOK', 'GREEN'],
+  ['PERLUREVISI', 'RED'], ['HARDERROR', 'RED'], ['GAGAL', 'RED'], ['ERROR', 'RED'],
+  ['TERTUNDA', 'AMBER'], ['DEFER', 'AMBER'], ['RETRY', 'AMBER'],
+  ['DILEWATI', 'GREY'], ['SKIPPED', 'GREY'], ['STOPPED', 'GREY'],
+  ['BLOCKED', 'BLUE'],
+  ['INPROGRESS', 'YELLOW'], ['ACTIVE', 'YELLOW'], ['RUNNING', 'YELLOW'], ['VALIDATING', 'YELLOW'],
+  ['QUEUED', 'ORANGE'], ['ANTREAN', 'ORANGE'],
+  ['OK', 'GREEN']
+];
+
 var VISIT_CATEGORY_OPTIONS = ['F1', 'F2', 'F4', 'F8'];
 var VISIT_CATEGORY_FREQUENCY = { F1: 1, F2: 2, F4: 4, F8: 8 };
 var VISIT_TYPE_OPTIONS = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
 var VISIT_DAYS = ['M', 'T', 'W', 'TH', 'F', 'S', 'SU'];
 var REASON_OPTIONS = ['Rolling', 'Toko Bangkrut'];
 var OPEN_ENDED_DATE_TEXT = '9999-12-31';
+
+/* LOV Sales Type (New code S4) — dipakai sheet Change Salesman Type. */
+var SALES_TYPE_OPTIONS = [
+  '11 - CORPORATE FOOD',
+  '12 - CORPORATE NON FOOD',
+  '13 - CORPORATE ALL',
+  '14 - CORPORATE RETAIL',
+  '15 - CORPORATE RUMAH MAKAN',
+  '16 - RETAIL S',
+  '17 - KEY ACCOUNT FOOD',
+  '18 - KEY ACCOUNT NON FOOD',
+  '19 - KEY ACCOUNT',
+  '20 - KEY ACCOUNT FOOD TOP',
+  '21 - KEY ACCOUNT NON FOOD TOP',
+  '22 - KEY ACCOUNT TOP',
+  '23 - SALESMAN KOSMETIK',
+  '24 - HOREKA BR',
+  '25 - HOREKA NON BR',
+  '26 - HOREKA MIX',
+  '27 - SALESMAN HOREKA',
+  '28 - MOTORIS FOOD',
+  '29 - MOTORIS NON FOOD',
+  '30 - MOTORIS MIX',
+  '31 - MOTORIS GROSIR',
+  '32 - MOTORIS GROSIR WARUNG SEDUH MIE',
+  '33 - MOTORIS GROSIR WARUNG SEDUH KOPI',
+  '34 - MOTORIS WARUNG SEDUH KOPI',
+  '35 - MOTORIS WARUNG SEDUH MIE',
+  '36 - CANVAS MOBIL GROSIR',
+  '37 - CANVAS MOBIL FOOD',
+  '38 - CANVAS MOBIL NON FOOD',
+  '39 - CANVAS MOBIL MIX',
+  '40 - SALESMAN FROZEN F2',
+  '41 - SALESMAN FROZEN F4',
+  '42 - SALESMAN FROZEN F4 HYPER / SUPER',
+  '43 - SALESMAN FROZEN F4 SHARING SHOWCASE',
+  '44 - SALESMAN MTI',
+  '45 - SALESMAN MTKA (AO)',
+  '46 - SALESMAN MT MIX',
+  '47 - INSTITUSI SALESMAN',
+  '48 - SALESMAN EXPORT',
+  '49 - SALESMAN RETAIL ONLINE',
+  '50 - SALESMAN CERAMIC ROOF',
+  '51 - SALESMAN GYPSUM',
+  '52 - SALESMAN FIBER CEMENT',
+  '53 - SALESMAN MIX BUILDING MATERIAL',
+  '54 - MD DISPLAY',
+  '55 - MD FROZEN',
+  '56 - MD BRANDING',
+  '57 - MDMM',
+  '58 - TEAM SAMPLING',
+  '59 - COMBER',
+  '60 - ACCOUNT DEVELOPMENT OFFICER',
+  '61 - RO',
+  '62 - SPG (WS)',
+  '63 - COLLECTOR IRE',
+  '64 - COLLECTOR',
+  '65 - MNI MARKET TOP',
+  '66 - MOTORIST R3',
+  '67 - CORPORATE RETAIL EXPAND',
+  'A1 - KAE MTKA',
+  'A2 - KAE E-COMM',
+  'A3 - KAO MTKA',
+  'A4 - RAS MTI',
+  'A5 - RAS MIX',
+  'A6 - RAS MTKA',
+  'A7 - KAM MTKA',
+  'A8 - KAM FROZEN',
+  'A9 - KAM ECOMM',
+  'B1 - SPV MIX',
+  'B2 - SPV RETAIL',
+  'B3 - SPV NON FOOD',
+  'B4 - SPV FOOD',
+  'B5 - SPV RETAIL SMALL',
+  'B6 - SPV MOTORIS',
+  'B7 - SPV KOSMETIK',
+  'B8 - AS HOREKA',
+  'B9 - AE HOREKA',
+  'C1 - SPV HOREKA ALL',
+  'C2 - SPV FROZEN',
+  'C3 - SPV CERAMIC ROOF',
+  'C4 - SPV GYPSUM',
+  'C5 - SPV FIBER CEMENT',
+  'C6 - SPV MIX BUILDING MATERIAL',
+  'C7 - INSTITUSI AS',
+  'C8 - INSTITUSI AE',
+  'C9 - KSR/TL',
+  'D1 - KOORDINATOR COMBER',
+  'D2 - KPL',
+  'D3 - KMD',
+  'D4 - SPV RO',
+  'N1 - ASM FOOD',
+  'N2 - ASM NON FOOD',
+  'N3 - ASM MIX',
+  'N4 - ASM RETAIL SMALL',
+  'N5 - ASM MOTORIS',
+  'N6 - ASM KOSMETIK',
+  'N7 - AM HOREKA',
+  'N8 - ASM FROZEN',
+  'N9 - RKAM MTI',
+  'O1 - SENIOR KAM',
+  'O2 - RSM',
+  'O3 - ARSM',
+  'O4 - RSM FROZEN',
+  'O5 - GKAM',
+  'O6 - SM FOOD',
+  'O7 - SM NON FOOD',
+  'O8 - SM MIX',
+  'O9 - ASM (WS)',
+  'P1 - SM KOSMETIK',
+  'P2 - ASM KOSMETIK (WS)',
+  'P3 - SM FROZEN',
+  'P4 - ASM FROZEN (WS)',
+  'P5 - RKAM MTKA',
+  'P6 - GKAM MTKA'
+];
 
 var RELATIONSHIP_OPTIONS = [
   'ZWS003 - Sales Rep. Food',
@@ -888,6 +1072,57 @@ function rscLeaseRelease_(resource, token) {
   } catch (e) { /* lease kedaluwarsa sendiri */ }
 }
 
+/* -------------------------------------------------------------
+ * PEWARNAAN STATUS TERPUSAT
+ * Semua permukaan (O:P, manifest, dashboard, rekap) memakai peta yang sama
+ * supaya arti warna tidak pernah berbeda antar sheet.
+ * ----------------------------------------------------------- */
+
+function RSC_UI_STATUS_COLOR_20260820_(status) {
+  var NONE = RSC_UI_STATUS_COLORS_20260820.NONE;
+  var key = rscKey_(status);
+  if (!key) return NONE;
+  var name = RSC_UI_STATUS_MAP_20260820[key];
+  if (!name) {
+    for (var i = 0; i < RSC_UI_STATUS_KEYWORDS_20260820.length; i++) {
+      if (key.indexOf(RSC_UI_STATUS_KEYWORDS_20260820[i][0]) >= 0) {
+        name = RSC_UI_STATUS_KEYWORDS_20260820[i][1];
+        break;
+      }
+    }
+  }
+  return RSC_UI_STATUS_COLORS_20260820[name || 'NONE'] || NONE;
+}
+
+/**
+ * Warnai satu kolom status. `statuses` adalah array teks per baris.
+ * Best-effort: kegagalan pewarnaan tidak pernah menggagalkan pipeline.
+ */
+function RSC_UI_PAINT_STATUS_COLUMN_20260820_(sheet, firstRow, col, statuses, width) {
+  if (!sheet || !statuses || !statuses.length) return 0;
+  width = width || 1;
+  try {
+    var bg = [], fc = [], fw = [];
+    for (var i = 0; i < statuses.length; i++) {
+      var p = RSC_UI_STATUS_COLOR_20260820_(statuses[i]);
+      var rb = [], rf = [], rw = [];
+      for (var c = 0; c < width; c++) {
+        rb.push(p.bg);
+        rf.push(p.font);
+        rw.push(c === 0 && p.bold ? 'bold' : 'normal');
+      }
+      bg.push(rb); fc.push(rf); fw.push(rw);
+    }
+    var rng = sheet.getRange(firstRow, col, statuses.length, width);
+    rng.setBackgrounds(bg);
+    if (rng.setFontColors) rng.setFontColors(fc);
+    if (rng.setFontWeights) rng.setFontWeights(fw);
+    return statuses.length;
+  } catch (e) {
+    return 0;
+  }
+}
+
 
 /* =============================================================
  * 5. SNAPSHOT + PENYIMPANAN INDEX BERTINGKAT — perbaikan [F6]
@@ -961,6 +1196,11 @@ function rscIndexStore_(createIfMissing) {
 
 function rscIdxSheetName_(tableName) { return 'IDX_' + tableName; }
 
+// Prefix key agregat bantu pada sheet index. Key asli selalu numerik / kode,
+// jadi prefix ini dijamin tidak pernah bentrok.
+var RSC_IDX_AUX_EARLIEST = '~E|';
+var RSC_IDX_AUX_CLOSED = '~C|';
+
 function rscIdxSheetWrite_(tableName, ver, built) {
   var ss = rscIndexStore_(true);
   if (!ss) return { ok: false, reason: 'NO_STORE' };
@@ -973,18 +1213,32 @@ function rscIdxSheetWrite_(tableName, ver, built) {
 
   var keys = Object.keys(built.map);
   sh.getRange(1, 1, 1, 2).setValues([[ver, JSON.stringify({
-    rows: built.rows, sheet: built.sheet, source: built.source, mode: built.mode, keys: keys.length
+    rows: built.rows, sheet: built.sheet, source: built.source, mode: built.mode, keys: keys.length,
+    fieldPresent: built.fieldPresent || null, fields: built.fields || null
   })]]);
 
+  // Agregat bantu (histori Toko Bangkrut) ikut dimaterialisasi dengan prefix
+  // yang tidak mungkin bentrok dengan key asli (key asli selalu numerik).
+  var pairs = [];
+  for (var kk = 0; kk < keys.length; kk++) pairs.push([keys[kk], JSON.stringify(built.map[keys[kk]])]);
+  if (built.earliest) {
+    var ek = Object.keys(built.earliest);
+    for (var e = 0; e < ek.length; e++) pairs.push([RSC_IDX_AUX_EARLIEST + ek[e], built.earliest[ek[e]]]);
+  }
+  if (built.closed) {
+    var ck = Object.keys(built.closed);
+    for (var c = 0; c < ck.length; c++) pairs.push([RSC_IDX_AUX_CLOSED + ck[c], built.closed[ck[c]]]);
+  }
+
   var row = 2, i = 0, block = RSC_DB_PARAMETERS.indexSheetWriteRows;
-  while (i < keys.length) {
-    var n = Math.min(block, keys.length - i);
+  while (i < pairs.length) {
+    var n = Math.min(block, pairs.length - i);
     var out = [];
-    for (var k = 0; k < n; k++) out.push([keys[i + k], JSON.stringify(built.map[keys[i + k]])]);
+    for (var k = 0; k < n; k++) out.push(pairs[i + k]);
     sh.getRange(row, 1, n, 2).setValues(out);
     row += n; i += n;
   }
-  return { ok: true, keys: keys.length };
+  return { ok: true, keys: keys.length, rows: pairs.length };
 }
 
 function rscIdxSheetRead_(tableName, ver) {
@@ -998,19 +1252,38 @@ function rscIdxSheetRead_(tableName, ver) {
   try { meta = JSON.parse(head[1] || '{}'); } catch (e) { meta = {}; }
 
   var last = sh.getLastRow(), map = {}, row = 2;
+  var closed = {}, closedKeys = {}, earliest = {};
   var win = RSC_DB_PARAMETERS.indexSheetReadRows;
   while (row <= last) {
     var n = Math.min(win, last - row + 1);
     var vals = sh.getRange(row, 1, n, 2).getDisplayValues();
     for (var r = 0; r < vals.length; r++) {
-      if (!vals[r][0]) continue;
-      try { map[vals[r][0]] = JSON.parse(vals[r][1]); } catch (e2) { /* baris rusak dilewati */ }
+      var key = vals[r][0];
+      if (!key) continue;
+      if (key.indexOf(RSC_IDX_AUX_EARLIEST) === 0) {
+        earliest[key.substring(RSC_IDX_AUX_EARLIEST.length)] = rscText_(vals[r][1]);
+        continue;
+      }
+      if (key.indexOf(RSC_IDX_AUX_CLOSED) === 0) {
+        var triple = key.substring(RSC_IDX_AUX_CLOSED.length);
+        closed[triple] = rscText_(vals[r][1]);
+        var cut = triple.indexOf('|');
+        if (cut > 0) {
+          var cust = triple.substring(0, cut), suffix = triple.substring(cut + 1);
+          if (!closedKeys[cust]) closedKeys[cust] = [];
+          closedKeys[cust].push(suffix);
+        }
+        continue;
+      }
+      try { map[key] = JSON.parse(vals[r][1]); } catch (e2) { /* baris rusak dilewati */ }
     }
     row += n;
   }
   return {
     available: true, map: map, rows: meta.rows || 0, sheet: meta.sheet || '',
-    source: meta.source || '', mode: meta.mode || '', storedIn: 'sheet'
+    source: meta.source || '', mode: meta.mode || '', storedIn: 'sheet',
+    fields: meta.fields || null, fieldPresent: meta.fieldPresent || null,
+    closed: closed, closedKeys: closedKeys, earliest: earliest
   };
 }
 
@@ -1228,6 +1501,8 @@ function rscBuildRelationIndex_() {
   var lastRow = sh.getLastRow(), lastCol = Math.max(1, sh.getLastColumn());
   var cutoff = rscActiveCutoff_();
   var map = {}, total = 0, skipped = 0, expired = 0;
+  var closed = {}, closedKeys = {}, earliest = {};
+  var openEnded = OPEN_ENDED_DATE_TEXT;
   var row = layout.firstDataRow, win = RSC_DB_PARAMETERS.readWindowRows;
 
   while (row <= lastRow) {
@@ -1236,6 +1511,24 @@ function rscBuildRelationIndex_() {
     for (var r = 0; r < block.length; r++) {
       var rec = RSC_MBP_RELATION_PARSE_ROW_20260819_(layout, block[r]);
       if (!rec || !rec.customer || !/^\d{6,12}$/.test(rec.customer)) { skipped++; continue; }
+
+      // Agregat ringan yang tetap disimpan walau barisnya sudah kedaluwarsa.
+      // Toko Bangkrut membutuhkan histori ini untuk menentukan Valid From.
+      if (rec.validFrom) {
+        if (!earliest[rec.customer] || rec.validFrom < earliest[rec.customer]) {
+          earliest[rec.customer] = rec.validFrom;
+        }
+        if (rec.relationship && rec.salesman && rec.validTo !== openEnded) {
+          var tkey = rec.customer + '|' + rec.relationship + '|' + rec.salesman;
+          if (!closed[tkey] || rec.validFrom > closed[tkey]) {
+            closed[tkey] = rec.validFrom;
+            if (!closedKeys[rec.customer]) closedKeys[rec.customer] = [];
+            var suffix = rec.relationship + '|' + rec.salesman;
+            if (closedKeys[rec.customer].indexOf(suffix) < 0) closedKeys[rec.customer].push(suffix);
+          }
+        }
+      }
+
       if (rec.validTo && rec.validTo < cutoff) { expired++; continue; }
       if (!map[rec.customer]) map[rec.customer] = [];
       if (map[rec.customer].length < 24) {
@@ -1247,6 +1540,7 @@ function rscBuildRelationIndex_() {
   }
   return {
     available: true, map: map, rows: total, skippedRows: skipped, expiredRows: expired,
+    closed: closed, closedKeys: closedKeys, earliest: earliest,
     sheet: sh.getName(), source: loc.ssName, sourceId: loc.ssId, mode: layout.mode,
     fields: ['Relationship', 'Salesman ID', 'Valid From', 'Valid To']
   };
@@ -1269,10 +1563,12 @@ function rscBuildHeaderIndex_(aliases, keySpecs, valSpecs, opts) {
     if (ci < 0) return { available: false, reason: 'KEY_COLUMN_MISSING', map: {}, rows: 0, sheet: sh.getName() };
     keyIdx.push(ci);
   }
-  var valIdx = [], fields = [];
+  var valIdx = [], fields = [], fieldPresent = {};
   for (var v = 0; v < valSpecs.length; v++) {
-    valIdx.push(rscPickCol_(hmap, valSpecs[v].aliases));
+    var ci2 = rscPickCol_(hmap, valSpecs[v].aliases);
+    valIdx.push(ci2);
     fields.push(valSpecs[v].name);
+    fieldPresent[valSpecs[v].name] = ci2 >= 0;
   }
   var activeAt = -1;
   if (opts.activeField) {
@@ -1312,6 +1608,7 @@ function rscBuildHeaderIndex_(aliases, keySpecs, valSpecs, opts) {
   }
   return {
     available: true, map: map, rows: total, expiredRows: expired, fields: fields,
+    fieldPresent: fieldPresent,
     sheet: sh.getName(), source: loc.ssName, sourceId: loc.ssId, mode: 'header'
   };
 }
@@ -1350,6 +1647,13 @@ function rscBuildIndex_(tableName) {
       { name: 'Valid From', aliases: D.visitHeaders.validFrom },
       { name: 'Valid To', aliases: D.visitHeaders.validTo }
     ], { maxPerKey: 8 });
+  }
+
+  if (tableName === 'RELTYPE') {
+    if (!D.tables.RELTYPE) return { available: false, reason: 'TABLE_NOT_CONFIGURED', map: {}, rows: 0 };
+    return rscBuildHeaderIndex_(D.tables.RELTYPE, [D.relTypeHeaders.id], [
+      { name: 'Description', aliases: D.relTypeHeaders.desc }
+    ], { maxPerKey: 1 });
   }
 
   throw new RscDataError('Tabel master tidak dikenal: ' + tableName);
@@ -1427,16 +1731,27 @@ function rscRecObj_(index, rec) {
 
 
 /* =============================================================
- * 7. SPESIFIKASI SHEET + ENGINE VALIDASI
+ * 7. SPESIFIKASI SHEET + ENGINE VALIDASI (Standard V28.3 / PERF26)
  * -------------------------------------------------------------
- * Satu engine dipakai untuk semua sheet yang divalidasi. Yang berbeda hanya
- * daftar kolom dan daftar rule, sehingga normalisasi, penulisan hasil, dan
- * pelaporan dijamin identik di mana pun.
+ * Satu engine dipakai Active Sheet maupun Bulk Link E, sehingga keputusan
+ * bisnis dijamin identik. Yang berbeda hanya orchestration-nya.
+ *
+ *   RSC_STD_VALIDATE_ONE_SHEET_20260814_
+ *     -> RSC_STD_VALIDATE_ROLLING_20260814_
+ *          -> RSC_V28_3_VALIDATE_ROLLING_SNAPSHOT_20260814_
+ *               1. RSC_V28_3_CREATE_ROLLING_SNAPSHOT_20260814_   (baca + canonicalize)
+ *               2. RSC_V28_3_LOAD_ROLLING_MASTERS_20260814_      (subset master)
+ *               3. RSC_STD_LOAD_RELATION_CONTEXT_20260814_       (konteks m_bp_relation)
+ *               4. RSC_STD_DETECT_CHANGE_SCHEDULE_ONLY_20260819_ (CASE 1 / CASE 2)
+ *               5. RSC_V28_3_APPLY_ROLLING_MUTATIONS_20260814_   (auto-replace)
+ *               6. RSC_V28_3_VALIDATE_ROLLING_SNAPSHOT_RULES_20260814_
+ *               7. RSC_V28_3_WRITE_ROLLING_SNAPSHOT_20260814_    (A:N + O:P + warna)
  * ============================================================= */
 
 var RSC_SHEET_SPECS = [
   {
     key: 'ROLLING',
+    validator: 'ROLLING',
     label: 'Change Rolling & Change Schedule',
     names: ['Change Rolling & Change Schedule', 'Change Rolling & Change Schedul', 'Change Rolling'],
     primary: true,
@@ -1448,51 +1763,63 @@ var RSC_SHEET_SPECS = [
     ],
     statusCol: 15,
     errorCol: 16,
+    dataCols: 14,
     dateFields: ['Valid From', 'Valid To', 'Visit Valid From', 'Visit Valid To'],
-    idFields: ['Sales Office', 'Delivering Plant', 'Relationship', 'Salesman BP Type', 'Visit Category', 'Visit Type'],
-    required: ['Sales Office', 'Delivering Plant', 'Customer ID', 'Salesman ID', 'Salesman BP Type',
-               'Valid From', 'Valid To', 'Visit Category', 'Visit Type', 'Schedule Visit',
-               'Visit Valid From', 'Visit Valid To', 'Reason'],
-    rowRules: ['R1', 'R2', 'R3', 'R4', 'R5', 'R6', 'R9', 'R10'],
+    idFields: ['Sales Office', 'Delivering Plant', 'Customer ID', 'Relationship', 'Salesman ID',
+               'Salesman BP Type', 'Visit Category', 'Visit Type'],
+    rowRules: ['S0', 'R1', 'R1A', 'R2', 'R3', 'R4', 'R5', 'R6', 'R9', 'R9A', 'R10', 'R11', 'R12'],
     tableRules: ['R7', 'R8a', 'R8b', 'TB']
   },
   {
     key: 'SALESMAN_TYPE',
+    validator: 'SALESMAN_TYPE',
     label: 'Change Salesman Type',
     names: ['Change Salesman Type'],
     header: ['Salesman ID', 'Sales Organization', 'Sales Office', 'Sales Type', 'Coverage',
              'Valid From', 'Valid To', 'Validation Status', 'Error Detail'],
     statusCol: 8,
     errorCol: 9,
+    dataCols: 7,
     dateFields: ['Valid From', 'Valid To'],
-    idFields: ['Sales Organization', 'Sales Office', 'Sales Type'],
-    required: ['Salesman ID', 'Sales Organization', 'Sales Office', 'Sales Type', 'Valid From', 'Valid To'],
-    rowRules: ['R1', 'R3', 'R4', 'R9'],
-    tableRules: ['R8a']
+    idFields: ['Salesman ID', 'Sales Organization', 'Sales Office', 'Sales Type'],
+    dupKey: ['Salesman ID', 'Sales Organization', 'Sales Office', 'Sales Type', 'Coverage', 'Valid To'],
+    rowRules: [],
+    tableRules: []
   },
   {
     key: 'SALES_OFFICE',
+    validator: 'SALES_OFFICE',
     label: 'Change Sales Office',
     names: ['Change Sales Office'],
     header: ['BP Number Source', 'Delivering Plant', 'Distr. Channel', 'Division',
              'Sales Organization', 'Sales Office', 'Validation Status', 'Error Detail'],
     statusCol: 7,
     errorCol: 8,
+    dataCols: 6,
     dateFields: [],
-    idFields: ['Sales Organization', 'Sales Office', 'Distr. Channel', 'Division'],
-    required: ['BP Number Source', 'Sales Organization', 'Sales Office'],
-    rowRules: ['R1', 'R3', 'R10'],
-    tableRules: ['R8a']
+    idFields: ['Delivering Plant', 'Distr. Channel', 'Division', 'Sales Organization', 'Sales Office'],
+    dupKey: ['BP Number Source', 'Delivering Plant', 'Sales Organization', 'Distr. Channel', 'Division', 'Sales Office'],
+    rowRules: [],
+    tableRules: []
   }
 ];
 
 function rscSpecFor_(sheetName) {
   var k = rscKey_(sheetName);
-  for (var i = 0; i < RSC_SHEET_SPECS.length; i++) {
-    var names = RSC_SHEET_SPECS[i].names;
-    for (var n = 0; n < names.length; n++) {
-      var nk = rscKey_(names[n]);
-      if (k === nk || k.indexOf(nk) === 0 || nk.indexOf(k) === 0) return RSC_SHEET_SPECS[i];
+  if (!k) return null;
+  var i, n;
+  for (i = 0; i < RSC_SHEET_SPECS.length; i++) {
+    for (n = 0; n < RSC_SHEET_SPECS[i].names.length; n++) {
+      if (k === rscKey_(RSC_SHEET_SPECS[i].names[n])) return RSC_SHEET_SPECS[i];
+    }
+  }
+  // Toleransi hanya untuk nama tab yang terpotong 31 karakter oleh xlsx.
+  if (sheetName && String(sheetName).length >= RSC_SHEET_NAME_LIMIT) {
+    for (i = 0; i < RSC_SHEET_SPECS.length; i++) {
+      for (n = 0; n < RSC_SHEET_SPECS[i].names.length; n++) {
+        var nk = rscKey_(RSC_SHEET_SPECS[i].names[n]);
+        if (nk.indexOf(k) === 0) return RSC_SHEET_SPECS[i];
+      }
     }
   }
   return null;
@@ -1503,12 +1830,107 @@ function rscPrimarySpec_() {
   return RSC_SHEET_SPECS[0];
 }
 
+/* -------------------------------------------------------------
+ * 7.1 CANONICALIZATION (dijalankan sebelum rule apa pun)
+ * ----------------------------------------------------------- */
+
+var RSC_SALESMAN_NORMAL_RE = /^S\d+$/;
+var RSC_SALESMAN_DUMMY_RE = /^S0000[0TSM][A-Z0-9]{4}$/;
+var RSC_SS_PAIR_RE = /^S[A-Z0-9]+$/;
+var RSC_RELATIONSHIP_FORMAT_RE = /^(ZWS\d{3}|BUR001)$/;
+var RSC_BP_TYPE_FORMAT_RE = /^ZD\d{2}$/;
+var RSC_PLANT_FORMAT_RE = /^[A-Z0-9]{4}$/;
+
+/** Kode/ID: buang label dropdown, apostrof, spasi, zero-width; uppercase. */
+function RSC_STD_CANON_CODE_20260814_(v) {
+  return RSC_NORMALIZE_ID_(v);
+}
+
+/** Visit Type: 1 / 01 / 1.0 -> 01. Selalu 2 digit bila numerik. */
+function RSC_STD_CANON_VISIT_TYPE_20260814_(v) {
+  var s = RSC_NORMALIZE_ID_(v);
+  if (!s) return '';
+  if (/^\d+$/.test(s)) {
+    var n = Number(s);
+    return (n >= 0 && n < 100) ? rscPad_(n, 2) : s;
+  }
+  return s;
+}
+
 /**
- * Kebijakan tanggal Rolling.
+ * Schedule Visit: koma full-width -> koma biasa, whitespace dibuang,
+ * uppercase, token dirapikan. Normalisasi ini terjadi SEBELUM R6, jadi
+ * "W1M, W3M" otomatis menjadi "W1M,W3M" dan bukan ERROR.
+ */
+function RSC_STD_CANON_SCHEDULE_20260814_(v) {
+  var raw = rscText_(v);
+  if (!raw) return '';
+  var s = raw.replace(/，/g, ',').replace(/[;\/]/g, ',').toUpperCase().replace(/\s+/g, '');
+  var parts = s.split(',');
+  var out = [];
+  for (var i = 0; i < parts.length; i++) {
+    if (parts[i] !== '') out.push(parts[i]);
+    else out.push('');
+  }
+  // token kosong dipertahankan supaya R6 dapat melaporkan koma ganda
+  while (out.length && out[out.length - 1] === '') out.pop();
+  return out.join(',');
+}
+
+/**
+ * Tanggal fleksibel -> YYYY-MM-DD.
+ * Mengembalikan { raw, value, hadInput, parsed } supaya R4 dapat membedakan
+ * "kosong" (wajib) dari "terisi tetapi tidak bisa dibaca" (format salah).
+ */
+function RSC_STD_CANON_DATE_20260814_(v) {
+  var raw = (Object.prototype.toString.call(v) === '[object Date]') ? v : rscText_(v);
+  var hadInput = (Object.prototype.toString.call(v) === '[object Date]')
+    ? !isNaN(v.getTime())
+    : rscText_(v) !== '';
+  if (!hadInput) return { raw: '', value: '', hadInput: false, parsed: false };
+
+  var direct = rscDateStr_(v);
+  if (direct) return { raw: rscText_(v), value: direct, hadInput: true, parsed: true };
+
+  var s = rscText_(v);
+  var m = s.match(/^(\d{4})[.](\d{1,2})[.](\d{1,2})$/);
+  if (m) return { raw: s, value: m[1] + '-' + rscPad_(m[2], 2) + '-' + rscPad_(m[3], 2), hadInput: true, parsed: true };
+  m = s.match(/^(\d{1,2})[.](\d{1,2})[.](\d{4})$/);
+  if (m) return { raw: s, value: m[3] + '-' + rscPad_(m[2], 2) + '-' + rscPad_(m[1], 2), hadInput: true, parsed: true };
+  m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (m) return { raw: s, value: m[1] + '-' + rscPad_(m[2], 2) + '-' + rscPad_(m[3], 2), hadInput: true, parsed: true };
+
+  return { raw: s, value: '', hadInput: true, parsed: false };
+}
+
+/** Deteksi pasangan S* Customer + S* Salesman. */
+function RSC_STD_IS_SS_PAIR_20260814_(customerId, salesmanId) {
+  var c = RSC_NORMALIZE_ID_(customerId), s = RSC_NORMALIZE_ID_(salesmanId);
+  return !!(c && s && RSC_SS_PAIR_RE.test(c) && RSC_SS_PAIR_RE.test(s));
+}
+
+function RSC_STD_IS_DUMMY_SALESMAN_20260814_(salesmanId) {
+  return RSC_SALESMAN_DUMMY_RE.test(RSC_NORMALIZE_ID_(salesmanId));
+}
+
+function RSC_STD_IS_NORMAL_SALESMAN_20260814_(salesmanId) {
+  var s = RSC_NORMALIZE_ID_(salesmanId);
+  return RSC_SALESMAN_NORMAL_RE.test(s) && !RSC_SALESMAN_DUMMY_RE.test(s);
+}
+
+function rscIsRollingReason_(reason) {
+  return rscText_(reason).toUpperCase().indexOf('ROLLING') >= 0;
+}
+
+function rscIsTokoBangkrutReason_(reason) {
+  return rscText_(reason).toUpperCase().indexOf('TOKO BANGKRUT') >= 0;
+}
+
+/**
+ * Kebijakan tanggal Rolling (§9 PERF26).
  * Reason = Rolling  : Valid From dan Visit Valid From WAJIB dateNew.
  *                     Histori m_bp_relation tidak boleh menarik mundur.
- * Change Schedule Only mode PAIR_NO_RELATION: field relasi tetap apa adanya,
- *                     hanya Visit Valid From yang mengikuti dateNew.
+ * PAIR_NO_RELATION  : field relasi apa adanya, hanya Visit Valid From = dateNew.
  */
 function RSC_PERF11_RESOLVE_ROLLING_DATE_POLICY_20260819_(reason, csoMode, sourceValidFrom, dateNew) {
   var next = String(dateNew === null || dateNew === undefined ? '' : dateNew);
@@ -1522,30 +1944,105 @@ function RSC_PERF11_RESOLVE_ROLLING_DATE_POLICY_20260819_(reason, csoMode, sourc
   return { validFrom: next, visitValidFrom: next, policy: 'ROLLING_HARDCODED' };
 }
 
-/** Uraikan "W1W,W3W" menjadi token terstruktur. */
+/* -------------------------------------------------------------
+ * 7.2 SCHEDULE VISIT (R6 + matriks frekuensi F1/F2/F4/F8)
+ * ----------------------------------------------------------- */
+
 function rscParseSchedule_(v) {
-  var raw = rscText_(v).toUpperCase();
-  if (!raw) return { tokens: [], valid: [], invalid: [], weekdays: {}, weeks: {}, canonical: '' };
-  var parts = raw.split(/[,;\/]+/);
-  var tokens = [], valid = [], invalid = [], weekdays = {}, weeks = {};
+  var raw = RSC_STD_CANON_SCHEDULE_20260814_(v);
+  var res = { tokens: [], valid: [], invalid: [], empties: 0, weekdays: {}, weeks: {},
+              byDay: {}, canonical: raw };
+  if (!raw) return res;
+  var parts = raw.split(',');
   for (var i = 0; i < parts.length; i++) {
-    var t = parts[i].replace(/\s+/g, '');
-    if (!t) continue;
-    tokens.push(t);
+    var t = parts[i];
+    if (!t) { res.empties++; continue; }
+    res.tokens.push(t);
     var m = t.match(/^W([1-4])(SU|TH|M|T|W|F|S)$/);
-    if (m) { valid.push(t); weeks[m[1]] = true; weekdays[m[2]] = true; }
-    else invalid.push(t);
+    if (m) {
+      res.valid.push(t);
+      res.weeks[m[1]] = true;
+      res.weekdays[m[2]] = true;
+      if (!res.byDay[m[2]]) res.byDay[m[2]] = {};
+      res.byDay[m[2]][m[1]] = true;
+    } else {
+      res.invalid.push(t);
+    }
   }
-  return {
-    tokens: tokens, valid: valid, invalid: invalid, weekdays: weekdays, weeks: weeks,
-    canonical: tokens.slice().sort().join(',')
-  };
+  return res;
 }
 
-/** Master Sales Office dari sheet "em" di file induk. */
+/**
+ * Matriks frekuensi PERF26 §11.
+ *   F1 : tepat 1 token
+ *   F2 : tepat 2 token, hari sama, minggu 1+3 atau 2+4
+ *   F4 : tepat 4 token, hari sama, mencakup W1..W4
+ *   F8 : tepat 8 token, tepat 2 hari berbeda, tiap hari mencakup W1..W4
+ * Mengembalikan array pesan error (kosong bila lulus).
+ */
+function RSC_STD_VALIDATE_SCHEDULE_RULES_20260814_(visitCategory, scheduleText) {
+  var out = [];
+  var sch = rscParseSchedule_(scheduleText);
+  if (!sch.tokens.length && !sch.empties) return out;
+
+  if (sch.empties) out.push('Schedule Visit tidak boleh memiliki token kosong.');
+  for (var iv = 0; iv < sch.invalid.length; iv++) {
+    out.push('Token Schedule Visit tidak valid: ' + sch.invalid[iv] + '. Format W<1-4><M/T/W/TH/F/S/SU>.');
+  }
+  var seen = {};
+  for (var it = 0; it < sch.tokens.length; it++) {
+    if (seen[sch.tokens[it]]) out.push('Schedule Visit tidak boleh memiliki token duplikat: ' + sch.tokens[it] + '.');
+    seen[sch.tokens[it]] = true;
+  }
+  if (out.length) return out;
+
+  var cat = RSC_NORMALIZE_ID_(visitCategory);
+  if (VISIT_CATEGORY_OPTIONS.indexOf(cat) < 0) return out;
+
+  var need = VISIT_CATEGORY_FREQUENCY[cat];
+  var days = Object.keys(sch.weekdays);
+  var weeks = Object.keys(sch.weeks).sort().join(',');
+
+  if (cat === 'F1') {
+    if (sch.valid.length !== 1) out.push('F1 harus berisi tepat 1 token schedule.');
+    return out;
+  }
+  if (cat === 'F2') {
+    if (sch.valid.length !== 2) { out.push('F2 harus berisi tepat 2 token schedule.'); return out; }
+    if (days.length !== 1) out.push('F2 wajib menggunakan hari yang sama.');
+    if (weeks !== '1,3' && weeks !== '2,4') out.push('F2 pasangan minggu hanya boleh W1+W3 atau W2+W4.');
+    return out;
+  }
+  if (cat === 'F4') {
+    if (sch.valid.length !== 4) { out.push('F4 harus berisi tepat 4 token schedule.'); return out; }
+    if (days.length !== 1 || weeks !== '1,2,3,4') {
+      out.push('F4 harus hari yang sama dan mencakup W1,W2,W3,W4.');
+    }
+    return out;
+  }
+  if (cat === 'F8') {
+    if (sch.valid.length !== 8) out.push('F8 harus berisi tepat 8 token schedule.');
+    if (days.length !== 2) out.push('F8 harus terdiri dari tepat 2 hari berbeda.');
+    for (var d = 0; d < days.length; d++) {
+      var w = Object.keys(sch.byDay[days[d]]).sort().join(',');
+      if (w !== '1,2,3,4') out.push('Untuk F8, hari ' + days[d] + ' harus mencakup W1,W2,W3,W4.');
+    }
+    return out;
+  }
+  if (need && sch.valid.length !== need) {
+    out.push('Visit Category ' + cat + ' membutuhkan ' + need + ' token schedule.');
+  }
+  return out;
+}
+
+/* -------------------------------------------------------------
+ * 7.3 MASTER / DATABASE AUTHORITATIVE
+ * ----------------------------------------------------------- */
+
+/** Master Sales Office + hirarki Sales Org / Dist Channel / Division dari sheet "em". */
 function rscOfficeMaster_(masterSs) {
   if (RSC_MEM_INDEX.OFFICES) return RSC_MEM_INDEX.OFFICES;
-  var out = { available: false, map: {} };
+  var out = { available: false, map: {}, orgs: {}, orgDist: {}, orgDistDiv: {}, full: {} };
   try {
     var sh = rscFindSheet_(masterSs, [TEMPLATE_UI_PARAMETERS.sheetEm]);
     if (!sh) { RSC_MEM_INDEX.OFFICES = out; return out; }
@@ -1557,43 +2054,79 @@ function rscOfficeMaster_(masterSs) {
     if (cOffice < 0) { RSC_MEM_INDEX.OFFICES = out; return out; }
     var cDesc = (cOffice + 1 < header.length && rscKey_(header[cOffice + 1]) === 'DESCRIPTION') ? cOffice + 1 : -1;
     var cOrg = rscPickCol_(hmap, ['Sales Org', 'Sales Organization']);
+    var cDist = rscPickCol_(hmap, ['Distribution channel', 'Distr. Channel', 'Distribution Channel']);
+    var cDiv = rscPickCol_(hmap, ['Division']);
     var vals = sh.getRange(2, 1, lastRow - 1, lastCol).getDisplayValues();
     for (var r = 0; r < vals.length; r++) {
       var code = RSC_NORMALIZE_ID_(vals[r][cOffice]);
-      if (!code || out.map[code]) continue;
-      out.map[code] = {
-        code: code,
-        desc: cDesc >= 0 ? rscText_(vals[r][cDesc]) : '',
-        org: cOrg >= 0 ? RSC_NORMALIZE_ID_(vals[r][cOrg]) : ''
-      };
+      if (!code) continue;
+      var org = cOrg >= 0 ? RSC_NORMALIZE_ID_(vals[r][cOrg]) : '';
+      var dist = cDist >= 0 ? RSC_NORMALIZE_ID_(vals[r][cDist]) : '';
+      var div = cDiv >= 0 ? RSC_NORMALIZE_ID_(vals[r][cDiv]) : '';
+      if (!out.map[code]) {
+        out.map[code] = { code: code, desc: cDesc >= 0 ? rscText_(vals[r][cDesc]) : '', org: org };
+      }
+      if (org) {
+        out.orgs[org] = true;
+        if (dist) out.orgDist[org + '|' + dist] = true;
+        if (dist && div) out.orgDistDiv[org + '|' + dist + '|' + div] = true;
+        if (dist && div) out.full[org + '|' + dist + '|' + div + '|' + code] = true;
+      }
     }
     out.available = Object.keys(out.map).length > 0;
+    out.hasHierarchy = Object.keys(out.orgDistDiv).length > 0;
   } catch (e) { out.available = false; out.error = String(e); }
   RSC_MEM_INDEX.OFFICES = out;
   return out;
 }
 
-/** Master Relationship dari daftar parameter. */
+/**
+ * Master Relationship.
+ * Sumber utama: m_rel_salesman_type_rlt (DB sekunder dicoba lebih dulu).
+ * Fallback   : daftar canonical di parameter (ZWS + BUR001).
+ */
 function rscRelationshipMaster_() {
   if (RSC_MEM_INDEX.RELTYPE) return RSC_MEM_INDEX.RELTYPE;
-  var out = { available: true, source: 'parameters', map: {} };
+  var out = { available: true, source: 'parameters', map: {}, builtin: {} };
   for (var i = 0; i < RELATIONSHIP_OPTIONS.length; i++) {
     var opt = RELATIONSHIP_OPTIONS[i];
     var id = RSC_NORMALIZE_ID_(opt);
     var dash = opt.indexOf(' - ');
     out.map[id] = dash > 0 ? opt.substring(dash + 3) : '';
+    out.builtin[id] = true;
   }
+  // ZWS001..ZWS022 dan BUR001 diterima built-in walau tidak ada di dropdown.
+  for (var n = 1; n <= 22; n++) out.builtin['ZWS' + rscPad_(n, 3)] = true;
+  out.builtin['BUR001'] = true;
+
+  try {
+    var idx = rscGetIndex_('RELTYPE');
+    if (idx && idx.available && idx.map) {
+      var keys = Object.keys(idx.map);
+      if (keys.length) {
+        out.source = 'm_rel_salesman_type_rlt';
+        for (var k = 0; k < keys.length; k++) {
+          if (Object.prototype.hasOwnProperty.call(out.map, keys[k])) continue;
+          var recs = idx.map[keys[k]];
+          var desc = (recs && recs.length) ? rscText_(rscRecObj_(idx, recs[0])['Description']) : '';
+          out.map[keys[k]] = desc || keys[k];
+        }
+      }
+    }
+  } catch (e) { /* master relationship opsional */ }
+
   RSC_MEM_INDEX.RELTYPE = out;
   return out;
 }
 
 /** Muat seluruh master sekali per execution. */
-function rscLoadMasters_(masterSs) {
+function RSC_V28_3_LOAD_ROLLING_MASTERS_20260814_(masterSs) {
   var m = {
     office: rscOfficeMaster_(masterSs),
     relationship: rscRelationshipMaster_(),
     dateNew: VALIDATE_DATE_IN_TEMPLATE_PARAMETERS.dateNew,
     dateClose: VALIDATE_DATE_IN_TEMPLATE_PARAMETERS.dateClose,
+    openEnded: OPEN_ENDED_DATE_TEXT,
     idx: {},
     dbConfigured: rscDbSources_().length > 0,
     notes: []
@@ -1613,29 +2146,73 @@ function rscLoadMasters_(masterSs) {
   return m;
 }
 
-/* ---------------------- KONTEKS & DETEKSI CSO ---------------------- */
+/** Nama lama dipertahankan sebagai alias. */
+function rscLoadMasters_(masterSs) {
+  return RSC_V28_3_LOAD_ROLLING_MASTERS_20260814_(masterSs);
+}
 
-function rscBuildContext_(spec, values, masters) {
-  var ctx = { spec: spec, rows: [], errors: [], masters: masters || {}, skipped: {}, fieldIdx: {} };
-  for (var c = 0; c < spec.header.length; c++) ctx.fieldIdx[spec.header[c]] = c;
+/* -------------------------------------------------------------
+ * 7.4 SNAPSHOT — baca A:N lalu canonicalize
+ * ----------------------------------------------------------- */
+
+function RSC_V28_3_CREATE_ROLLING_SNAPSHOT_20260814_(spec, values, masters) {
+  var snap = {
+    spec: spec, masters: masters || {}, rows: [], errors: [], skipped: {},
+    fieldIdx: {}, mutations: 0, needs: { customers: {}, salesmen: {}, mvs: {} }
+  };
+  for (var c = 0; c < spec.header.length; c++) snap.fieldIdx[spec.header[c]] = c;
 
   for (var r = 0; r < values.length; r++) {
-    var raw = values[r], f = {}, nonEmpty = false;
+    var raw = values[r], f = {}, dates = {}, nonEmpty = false;
     for (var h = 0; h < spec.header.length; h++) {
       var name = spec.header[h];
       if (name === 'Validation Status' || name === 'Error Detail') continue;
       var val = raw[h], norm;
-      if (spec.dateFields.indexOf(name) >= 0) norm = rscDateStr_(val);
-      else if (spec.idFields.indexOf(name) >= 0) norm = RSC_NORMALIZE_ID_(val);
-      else norm = rscText_(val);
+      if (spec.dateFields.indexOf(name) >= 0) {
+        var dc = RSC_STD_CANON_DATE_20260814_(val);
+        dates[name] = dc;
+        norm = dc.value;
+        if (dc.hadInput) nonEmpty = true;
+      } else if (name === 'Visit Type') {
+        norm = RSC_STD_CANON_VISIT_TYPE_20260814_(val);
+      } else if (name === 'Schedule Visit') {
+        norm = RSC_STD_CANON_SCHEDULE_20260814_(val);
+      } else if (spec.idFields.indexOf(name) >= 0) {
+        norm = RSC_STD_CANON_CODE_20260814_(val);
+      } else {
+        norm = rscText_(val);
+      }
       f[name] = norm;
       if (norm) nonEmpty = true;
     }
     if (!nonEmpty) continue;
-    ctx.rows.push({ i: ctx.rows.length, sheetRow: r + 2, f: f, raw: raw, cso: null });
-    ctx.errors.push([]);
+
+    var row = {
+      i: snap.rows.length, sheetRow: r + 2, raw: raw, f: f, dates: dates,
+      cso: null, changed: false, mvsKey: '', mvsPicked: '', mutations: []
+    };
+    if (spec.validator === 'ROLLING') {
+      row.ssPair = RSC_STD_IS_SS_PAIR_20260814_(f['Customer ID'], f['Salesman ID']);
+      row.isRolling = rscIsRollingReason_(f['Reason']);
+      row.isTB = rscIsTokoBangkrutReason_(f['Reason']);
+      row.isDummy = RSC_STD_IS_DUMMY_SALESMAN_20260814_(f['Salesman ID']);
+      row.isNormalSalesman = RSC_STD_IS_NORMAL_SALESMAN_20260814_(f['Salesman ID']);
+      if (f['Customer ID']) snap.needs.customers[f['Customer ID']] = true;
+      if (f['Salesman ID']) snap.needs.salesmen[f['Salesman ID']] = true;
+      if (row.isTB && !row.ssPair) {
+        var key = [f['Visit Category'], f['Customer ID'], f['Salesman ID'], f['Visit Type']].join('|');
+        row.mvsKey = key;
+        snap.needs.mvs[key] = true;
+      }
+    }
+    snap.rows.push(row);
+    snap.errors.push([]);
   }
-  return ctx;
+  return snap;
+}
+
+function rscBuildContext_(spec, values, masters) {
+  return RSC_V28_3_CREATE_ROLLING_SNAPSHOT_20260814_(spec, values, masters);
 }
 
 function rscAddErr_(ctx, i, code, msg) { ctx.errors[i].push('[' + code + '] ' + msg); }
@@ -1649,248 +2226,502 @@ function rscRowIndexBySheetRow_(ctx, sheetRow) {
   return (v === undefined) ? -1 : v;
 }
 
+/* -------------------------------------------------------------
+ * 7.5 KONTEKS RELASI (m_bp_relation)
+ * ----------------------------------------------------------- */
+
 /**
- * Deteksi Change Schedule Only.
- * CASE 1 (EXACT_REL_VALID_TO) : Customer + Relationship + Salesman + Valid To
- *                               sudah ada di m_bp_relation.
- * CASE 2 (PAIR_NO_RELATION)   : Relationship kosong, pasangan Customer +
- *                               Salesman ada di m_bp_relation.
- * Baris Change Schedule Only dikecualikan dari duplicate check R8.
+ * Bangun konteks relasi yang dibutuhkan CSO, R8b, dan Toko Bangkrut, dalam
+ * satu lintasan atas ID yang benar-benar dipakai template (tidak full scan).
  */
-function rscDetectChangeScheduleOnly_(ctx) {
-  var idx = ctx.masters.idx && ctx.masters.idx.RELATION;
-  if (!idx || !idx.available) { ctx.skipped['CSO'] = 'master m_bp_relation tidak tersedia'; return; }
-  for (var i = 0; i < ctx.rows.length; i++) {
-    var f = ctx.rows[i].f;
-    var cust = f['Customer ID'];
-    if (!cust) continue;
-    var recs = idx.map[RSC_NORMALIZE_ID_(cust)];
-    if (!recs) continue;
-    var rel = f['Relationship'], sls = RSC_NORMALIZE_ID_(f['Salesman ID']), vt = f['Valid To'];
+function RSC_STD_LOAD_RELATION_CONTEXT_20260814_(snap) {
+  var idx = snap.masters.idx && snap.masters.idx.RELATION;
+  var ctxOut = {
+    available: !!(idx && idx.available),
+    exactKey: {},     // cust|rel|sls|validTo -> true
+    tripleOpen: {},   // cust|rel|sls -> validFrom terbaik untuk record open-ended
+    tripleClosed: {}, // cust|rel|sls -> validFrom terbaru untuk record tertutup
+    pair: {},         // cust|sls -> true
+    byCustomer: {},   // cust -> daftar record
+    earliest: {}      // cust -> valid from paling awal
+  };
+  if (!ctxOut.available) return ctxOut;
+
+  var open = snap.masters.openEnded || OPEN_ENDED_DATE_TEXT;
+  var customers = Object.keys(snap.needs.customers);
+  for (var c = 0; c < customers.length; c++) {
+    var cust = customers[c];
+    var recs = idx.map[cust];
+    if (!recs || !recs.length) continue;
+    ctxOut.byCustomer[cust] = recs;
     for (var r = 0; r < recs.length; r++) {
-      var mRel = RSC_NORMALIZE_ID_(recs[r][0]);
-      var mSls = RSC_NORMALIZE_ID_(recs[r][1]);
-      var mVt = rscDateStr_(recs[r][3]);
-      if (!rel && mSls && mSls === sls) {
-        ctx.rows[i].cso = { yes: true, mode: 'PAIR_NO_RELATION' };
-        break;
+      var rel = RSC_NORMALIZE_ID_(recs[r][0]);
+      var sls = RSC_NORMALIZE_ID_(recs[r][1]);
+      var vf = rscDateStr_(recs[r][2]);
+      var vt = rscDateStr_(recs[r][3]);
+      if (sls) ctxOut.pair[cust + '|' + sls] = true;
+      if (rel && sls) {
+        ctxOut.exactKey[cust + '|' + rel + '|' + sls + '|' + vt] = true;
+        var triple = cust + '|' + rel + '|' + sls;
+        if (vt === open) {
+          if (!ctxOut.tripleOpen[triple] || vf > ctxOut.tripleOpen[triple]) ctxOut.tripleOpen[triple] = vf;
+        } else {
+          if (!ctxOut.tripleClosed[triple] || vf > ctxOut.tripleClosed[triple]) ctxOut.tripleClosed[triple] = vf;
+        }
       }
-      if (rel && mRel === rel && mSls === sls && (!vt || !mVt || mVt === vt)) {
-        ctx.rows[i].cso = { yes: true, mode: 'EXACT_REL_VALID_TO' };
-        break;
+      if (vf && (!ctxOut.earliest[cust] || vf < ctxOut.earliest[cust])) ctxOut.earliest[cust] = vf;
+    }
+    // Histori tertutup di luar jendela aktif tetap diikutsertakan bila ada.
+    if (idx.closed) {
+      var pfx = cust + '|';
+      var ck = idx.closedKeys && idx.closedKeys[cust];
+      if (ck) {
+        for (var k = 0; k < ck.length; k++) {
+          var full = pfx + ck[k];
+          var val = idx.closed[full];
+          if (val && (!ctxOut.tripleClosed[full] || val > ctxOut.tripleClosed[full])) {
+            ctxOut.tripleClosed[full] = val;
+          }
+        }
       }
+    }
+    if (idx.earliest && idx.earliest[cust]) {
+      var e = idx.earliest[cust];
+      if (!ctxOut.earliest[cust] || e < ctxOut.earliest[cust]) ctxOut.earliest[cust] = e;
+    }
+  }
+  return ctxOut;
+}
+
+/**
+ * Deteksi Change Schedule Only (PERF26 §8).
+ * CASE 1 EXACT_REL_VALID_TO : Customer + Relationship + Salesman + Valid To
+ *                             cocok persis dengan record m_bp_relation.
+ * CASE 2 PAIR_NO_RELATION   : Relationship kosong dan pasangan
+ *                             Customer + Salesman ada di m_bp_relation.
+ */
+function RSC_STD_DETECT_CHANGE_SCHEDULE_ONLY_20260819_(snap, relCtx) {
+  if (!relCtx || !relCtx.available) {
+    snap.skipped['CSO'] = 'master m_bp_relation tidak tersedia';
+    return;
+  }
+  for (var i = 0; i < snap.rows.length; i++) {
+    var row = snap.rows[i], f = row.f;
+    var cust = f['Customer ID'], sls = f['Salesman ID'], rel = f['Relationship'];
+    if (!cust || !sls) continue;
+
+    if (!rel) {
+      if (relCtx.pair[cust + '|' + sls]) row.cso = { yes: true, mode: 'PAIR_NO_RELATION' };
+      continue;
+    }
+    var vt = f['Valid To'];
+    if (vt && relCtx.exactKey[cust + '|' + rel + '|' + sls + '|' + vt]) {
+      // Toko Bangkrut sengaja TIDAK diperlakukan sebagai Change Schedule Only.
+      if (!row.isTB) row.cso = { yes: true, mode: 'EXACT_REL_VALID_TO' };
+      else row.csoSuppressed = 'EXACT_REL_VALID_TO';
     }
   }
 }
 
-/* ---------------------------- RULE PER BARIS ---------------------------- */
+function rscDetectChangeScheduleOnly_(ctx) {
+  RSC_STD_DETECT_CHANGE_SCHEDULE_ONLY_20260819_(ctx, RSC_STD_LOAD_RELATION_CONTEXT_20260814_(ctx));
+}
+
+/* -------------------------------------------------------------
+ * 7.6 m_visit_schedule — subset terarah untuk Toko Bangkrut
+ * ----------------------------------------------------------- */
+
+/**
+ * Ambil hanya key MVS yang dipakai template.
+ * Key: Visit Category + Customer ID + Salesman ID + Visit Type.
+ * Nilai: daftar effective start date (Visit Valid From) terurut naik.
+ */
+function RSC_MVS_getIndexSubset_20260819_(snap) {
+  var idx = snap.masters.idx && snap.masters.idx.VISIT;
+  var out = { available: !!(idx && idx.available), map: {}, keys: 0 };
+  if (!out.available) return out;
+
+  var wanted = snap.needs.mvs;
+  var keys = Object.keys(wanted);
+  for (var i = 0; i < keys.length; i++) {
+    var parts = keys[i].split('|');
+    var cat = parts[0], cust = parts[1], sls = parts[2], typ = parts[3];
+    var recs = idx.map[cust + '|' + sls];
+    if (!recs || !recs.length) continue;
+    var dates = [];
+    for (var r = 0; r < recs.length; r++) {
+      var rec = rscRecObj_(idx, recs[r]);
+      var rcat = RSC_NORMALIZE_ID_(rec['Visit Category']);
+      var rtyp = RSC_STD_CANON_VISIT_TYPE_20260814_(rec['Visit Type']);
+      if (cat && rcat && rcat !== cat) continue;
+      if (typ && rtyp && rtyp !== typ) continue;
+      var vf = rscDateStr_(rec['Valid From']);
+      if (vf && dates.indexOf(vf) < 0) dates.push(vf);
+    }
+    if (!dates.length) continue;
+    dates.sort();
+    out.map[keys[i]] = dates;
+    out.keys++;
+  }
+  return out;
+}
+
+/**
+ * Pilih effective date Toko Bangkrut (PERF26 §10.2):
+ *   1. tanggal paling akhir yang <= dateClose;
+ *   2. bila tidak ada, tanggal paling awal yang tersedia.
+ */
+function RSC_MVS_PICK_EFFECTIVE_DATE_20260819_(dates, dateClose) {
+  if (!dates || !dates.length) return '';
+  var best = '';
+  for (var i = 0; i < dates.length; i++) {
+    if (dates[i] <= dateClose && (!best || dates[i] > best)) best = dates[i];
+  }
+  if (best) return best;
+  var min = dates[0];
+  for (var k = 1; k < dates.length; k++) if (dates[k] < min) min = dates[k];
+  return min;
+}
+
+/**
+ * Valid From Toko Bangkrut dari m_bp_relation (PERF26 §10.1):
+ *   1. exact triple Customer + Relationship + Salesman;
+ *   2. record open-ended (9999-12-31) diprioritaskan atas record tertutup;
+ *   3. pada rank sama, Valid From terbaru;
+ *   4. bila kosong, fallback Valid From paling awal milik Customer.
+ */
+function RSC_TB_RESOLVE_VALID_FROM_20260622_(relCtx, cust, rel, sls) {
+  if (!relCtx || !relCtx.available) return { value: '', source: 'NO_DB' };
+  var triple = cust + '|' + rel + '|' + sls;
+  if (rel && sls && relCtx.tripleOpen[triple]) return { value: relCtx.tripleOpen[triple], source: 'EXACT_OPEN' };
+  if (rel && sls && relCtx.tripleClosed[triple]) return { value: relCtx.tripleClosed[triple], source: 'EXACT_CLOSED' };
+  if (relCtx.earliest[cust]) return { value: relCtx.earliest[cust], source: 'CUSTOMER_FALLBACK' };
+  return { value: '', source: 'NOT_FOUND' };
+}
+
+/* -------------------------------------------------------------
+ * 7.7 MUTATION SEBELUM VALIDATION (PERF26 §13)
+ * -------------------------------------------------------------
+ * Beberapa field bersifat authoritative auto-replace, jadi isian user
+ * dibetulkan lebih dulu dan rule final menilai baris canonical, bukan raw.
+ * ----------------------------------------------------------- */
+
+function rscSetField_(row, name, value) {
+  var cur = row.f[name] === undefined ? '' : row.f[name];
+  var next = value === undefined || value === null ? '' : String(value);
+  if (cur === next) return false;
+  row.f[name] = next;
+  row.changed = true;
+  row.mutations.push(name);
+  return true;
+}
+
+/**
+ * Isi field hanya bila masih kosong.
+ * Dipakai untuk field Toko Bangkrut yang PUNYA rule ERROR sendiri: kalau user
+ * sudah mengisi nilai yang berbeda, nilai itu dibiarkan supaya rule TB dapat
+ * melaporkannya, bukan ditimpa diam-diam. Field yang tidak punya rule ERROR
+ * (Salesman BP Type, tanggal Rolling) tetap di-overwrite authoritative.
+ */
+function rscFillIfBlank_(row, name, value) {
+  if (row.f[name]) return false;
+  return rscSetField_(row, name, value);
+}
+
+function RSC_V28_3_APPLY_ROLLING_MUTATIONS_20260814_(snap, relCtx, mvs) {
+  var M = snap.masters;
+  var bpIdx = M.idx && M.idx.BP;
+  var dateNew = M.dateNew, dateClose = M.dateClose;
+
+  for (var i = 0; i < snap.rows.length; i++) {
+    var row = snap.rows[i], f = row.f;
+    var relOptional = !!(row.cso && row.cso.mode === 'PAIR_NO_RELATION');
+    var visitOptional = !!row.ssPair;
+
+    /* 1. Salesman BP Type authoritative dari m_bp_general_view. */
+    if (bpIdx && bpIdx.available && f['Salesman ID']) {
+      var recs = bpIdx.map[f['Salesman ID']];
+      if (recs && recs.length) {
+        var expected = RSC_NORMALIZE_ID_(rscRecObj_(bpIdx, recs[0])['Salesman BP Type']);
+        row.expectedBpType = expected;
+        if (expected) rscSetField_(row, 'Salesman BP Type', expected);
+      }
+    }
+
+    /* 2. Toko Bangkrut lebih dulu — ia mengunci tanggal relasi dan visit. */
+    if (row.isTB) {
+      if (!relOptional) {
+        var tb = RSC_TB_RESOLVE_VALID_FROM_20260622_(relCtx, f['Customer ID'], f['Relationship'], f['Salesman ID']);
+        row.tbValidFromSource = tb.source;
+        if (tb.value) rscSetField_(row, 'Valid From', tb.value);   // tidak punya rule ERROR sendiri
+        if (dateClose) rscFillIfBlank_(row, 'Valid To', dateClose);
+      }
+      if (!visitOptional) {
+        if (dateClose) rscFillIfBlank_(row, 'Visit Valid To', dateClose);
+        if (mvs && mvs.available && row.mvsKey) {
+          var dates = mvs.map[row.mvsKey];
+          if (dates && dates.length) {
+            row.mvsPicked = RSC_MVS_PICK_EFFECTIVE_DATE_20260819_(dates, dateClose);
+            if (row.mvsPicked) rscFillIfBlank_(row, 'Visit Valid From', row.mvsPicked);
+          }
+        }
+      }
+      continue;
+    }
+
+    /* 3. Rolling. Histori DB tidak boleh menarik Valid From ke masa lalu. */
+    if (row.isRolling) {
+      var mode = (row.cso && row.cso.yes) ? row.cso.mode : '';
+      var policy = RSC_PERF11_RESOLVE_ROLLING_DATE_POLICY_20260819_(
+        f['Reason'], mode, f['Valid From'], dateNew);
+      row.rollingPolicy = policy.policy;
+      if (policy.policy === 'ROLLING_HARDCODED') {
+        if (dateNew) rscSetField_(row, 'Valid From', dateNew);
+      }
+      if (!visitOptional && dateNew) rscSetField_(row, 'Visit Valid From', dateNew);
+    }
+  }
+
+  var changed = 0;
+  for (var k = 0; k < snap.rows.length; k++) if (snap.rows[k].changed) changed++;
+  snap.mutations = changed;
+  return changed;
+}
+
+/* -------------------------------------------------------------
+ * 7.8 BUSINESS RULES — S0, R1..R12, TB
+ * ----------------------------------------------------------- */
+
+function rscRelOptional_(row) { return !!(row.cso && row.cso.mode === 'PAIR_NO_RELATION'); }
+function rscVisitOptional_(row) { return !!row.ssPair; }
 
 var RSC_ROW_RULES = {
 
-  /** R1 — kolom wajib. Relationship boleh kosong khusus Change Schedule Only. */
-  R1: function (ctx, row, i) {
-    var missing = [];
-    for (var k = 0; k < ctx.spec.required.length; k++) {
-      if (!row.f[ctx.spec.required[k]]) missing.push(ctx.spec.required[k]);
+  /** S0 — Sales Office wajib + terdaftar di em; Delivering Plant 4 alphanumeric. */
+  S0: function (snap, row, i) {
+    var f = row.f;
+    var off = f['Sales Office'];
+    if (!off) {
+      rscAddErr_(snap, i, 'S0', 'Sales Office wajib diisi.');
+    } else {
+      var em = snap.masters.office;
+      if (em && em.available) {
+        if (!em.map[off]) rscAddErr_(snap, i, 'S0', 'Sales Office tidak ada di master em. Actual=' + off + '.');
+      } else {
+        snap.skipped['S0-em'] = 'master em tidak tersedia';
+      }
     }
-    if (ctx.spec.key === 'ROLLING' && !row.f['Relationship'] && !(row.cso && row.cso.yes)) {
-      missing.push('Relationship');
-    }
-    if (missing.length) rscAddErr_(ctx, i, 'R1', 'Kolom wajib kosong: ' + rscUniq_(missing).join(', ') + '.');
-  },
-
-  /** R2 — Relationship harus terdaftar di master Relationship. */
-  R2: function (ctx, row, i) {
-    var rel = row.f['Relationship'];
-    if (!rel) return;
-    var master = ctx.masters.relationship;
-    if (!master || !master.available) return;
-    if (!master.map[rel]) rscAddErr_(ctx, i, 'R2', 'Relationship tidak terdaftar pada master Relationship.');
-  },
-
-  /** R3 — Sales Office dan Delivering Plant. */
-  R3: function (ctx, row, i) {
-    var off = row.f['Sales Office'];
-    var master = ctx.masters.office;
-    if (!master || !master.available) { ctx.skipped['R3'] = 'master em tidak tersedia'; return; }
-    if (off && !master.map[off]) {
-      rscAddErr_(ctx, i, 'R3', 'Sales Office "' + off + '" tidak terdaftar pada master em.');
-    }
-    var plant = row.f['Delivering Plant'];
-    if (plant && off && plant !== off) {
-      rscAddErr_(ctx, i, 'R3', 'Delivering Plant "' + plant + '" harus sama dengan Sales Office "' + off + '".');
+    var plant = f['Delivering Plant'];
+    if (plant && !RSC_PLANT_FORMAT_RE.test(plant)) {
+      rscAddErr_(snap, i, 'S0', 'Delivering Plant harus 4 karakter alphanumeric. Actual=' + plant + '.');
     }
   },
 
-  /** R4 — format tanggal, urutan, dan kebijakan tanggal periode. */
-  R4: function (ctx, row, i) {
-    var spec = ctx.spec, bad = [];
-    for (var d = 0; d < spec.dateFields.length; d++) {
-      var name = spec.dateFields[d], v = row.f[name];
-      if (!v) continue;
-      if (!rscIsValidDateStr_(v)) bad.push(name + '="' + rscText_(row.raw[ctx.fieldIdx[name]]) + '"');
+  /** R1 — Customer ID dan Salesman ID: wajib, format, dan keberadaan di BP master. */
+  R1: function (snap, row, i) {
+    var f = snap.rows[i].f;
+    var bp = snap.masters.idx && snap.masters.idx.BP;
+    var bpOk = !!(bp && bp.available);
+    if (!bpOk) snap.skipped['R1-bp'] = 'master m_bp_general_view tidak tersedia';
+
+    var cust = f['Customer ID'];
+    if (!cust) {
+      rscAddErr_(snap, i, 'R1', 'Customer ID wajib diisi.');
+    } else {
+      if (!row.ssPair && !/^\d+$/.test(cust)) {
+        rscAddErr_(snap, i, 'R1',
+          'Customer ID harus numerik; exception hanya Salesman-to-Salesman/BP-Dummy pair. Actual=' + cust + '.');
+      }
+      if (bpOk && !bp.map[cust]) {
+        rscAddErr_(snap, i, 'R1', 'Customer ID tidak ditemukan di m_bp_general_view.bp_id. Actual=' + cust + '.');
+      }
     }
-    if (bad.length) {
-      rscAddErr_(ctx, i, 'R4', 'Format tanggal harus YYYY-MM-DD: ' + bad.join(', ') + '.');
+
+    var sls = f['Salesman ID'];
+    if (!sls) {
+      rscAddErr_(snap, i, 'R1', 'Salesman ID wajib diisi.');
       return;
     }
+    if (!row.isDummy && !row.isNormalSalesman) {
+      rscAddErr_(snap, i, 'R1', 'Salesman ID tidak sesuai format. Normal "S" + angka, Dummy ' +
+        '"S00000/S0000T/S0000S/S0000M" + 4 karakter office. Actual=' + sls + '.');
+    }
+    if (bpOk && !bp.map[sls]) {
+      rscAddErr_(snap, i, 'R1', 'Salesman ID tidak ditemukan di m_bp_general_view.bp_id. Actual=' + sls + '.');
+    }
+  },
+
+  /** R1A — Salesman normal wajib ada di m_sales_info. Dummy dikecualikan. */
+  R1A: function (snap, row, i) {
+    var sls = row.f['Salesman ID'];
+    if (!sls || row.isDummy || !row.isNormalSalesman) return;
+    var idx = snap.masters.idx && snap.masters.idx.SALESMAN;
+    if (!idx || !idx.available) { snap.skipped['R1A'] = 'master m_sales_info tidak tersedia'; return; }
+    if (!idx.map[sls]) {
+      rscAddErr_(snap, i, 'R1A', 'Salesman normal tidak ditemukan di m_sales_info.salesman_id. Actual=' + sls + '.');
+    }
+  },
+
+  /** R2 — Relationship wajib, format ZWSddd / BUR001, dan terdaftar. */
+  R2: function (snap, row, i) {
+    var rel = row.f['Relationship'];
+    if (!rel) {
+      if (!rscRelOptional_(row)) rscAddErr_(snap, i, 'R2', 'Relationship wajib diisi.');
+      return;
+    }
+    if (!RSC_RELATIONSHIP_FORMAT_RE.test(rel)) {
+      rscAddErr_(snap, i, 'R2', 'Relationship harus format ZWSnnn atau BUR001. Actual=' + rel + '.');
+      return;
+    }
+    var master = snap.masters.relationship;
+    if (!master) return;
+    if (master.builtin && master.builtin[rel]) return;
+    if (master.map && Object.prototype.hasOwnProperty.call(master.map, rel)) return;
+    rscAddErr_(snap, i, 'R2', 'Relationship tidak terdaftar pada canonical LOV/master Relationship. Actual=' + rel + '.');
+  },
+
+  /** R3 — Salesman BP Type wajib, format ZDnn, dan sama dengan master BP. */
+  R3: function (snap, row, i) {
+    var bpType = row.f['Salesman BP Type'];
+    if (!bpType) { rscAddErr_(snap, i, 'R3', 'Salesman BP Type wajib diisi.'); return; }
+    if (!RSC_BP_TYPE_FORMAT_RE.test(bpType)) {
+      rscAddErr_(snap, i, 'R3', 'Salesman BP Type harus format ZDnn, contoh ZD01. Actual=' + bpType + '.');
+      return;
+    }
+    var bp = snap.masters.idx && snap.masters.idx.BP;
+    if (!bp || !bp.available || !row.f['Salesman ID']) return;
+    if (!bp.map[row.f['Salesman ID']]) return;             // ketiadaan Salesman sudah dilaporkan R1
+    var expected = row.expectedBpType || '';
+    if (!expected) {
+      if (bp.fieldPresent && bp.fieldPresent['Salesman BP Type']) {
+        rscAddErr_(snap, i, 'R3', 'bp_type_id untuk Salesman ID tidak ditemukan di m_bp_general_view. Actual=' +
+          row.f['Salesman ID'] + '.');
+      }
+      return;
+    }
+    if (expected !== bpType) {
+      rscAddErr_(snap, i, 'R3', 'Salesman BP Type tidak sesuai master. Expected=' + expected + ', actual=' + bpType + '.');
+    }
+  },
+
+  /** R4 — kelengkapan dan validitas keempat tanggal. */
+  R4: function (snap, row, i) {
+    var relOpt = rscRelOptional_(row), visitOpt = rscVisitOptional_(row);
+    var checks = [
+      ['Valid From', !relOpt],
+      ['Valid To', !relOpt],
+      ['Visit Valid From', !visitOpt],
+      ['Visit Valid To', !visitOpt]
+    ];
+    for (var c = 0; c < checks.length; c++) {
+      var name = checks[c][0], required = checks[c][1];
+      if (!required) continue;
+      var d = row.dates[name] || { hadInput: false, parsed: false, value: '', raw: '' };
+      var val = row.f[name];
+      if (!val && !d.hadInput) { rscAddErr_(snap, i, 'R4', name + ' wajib diisi.'); continue; }
+      if (!val || !rscIsValidDateStr_(val)) {
+        rscAddErr_(snap, i, 'R4', name + ' harus format YYYY-MM-DD. Actual="' + (d.raw || val) + '".');
+      }
+    }
+  },
+
+  /** R5 — Visit Category wajib dan harus F1/F2/F4/F8. */
+  R5: function (snap, row, i) {
+    var cat = row.f['Visit Category'];
+    if (!cat) {
+      if (!rscVisitOptional_(row)) rscAddErr_(snap, i, 'R5', 'Visit Category wajib diisi.');
+      return;
+    }
+    if (VISIT_CATEGORY_OPTIONS.indexOf(cat) < 0) {
+      rscAddErr_(snap, i, 'R5', 'Visit Category harus F1, F2, F4, atau F8. Actual=' + cat + '.');
+    }
+  },
+
+  /** R6 — Schedule Visit wajib dan konsisten dengan matriks frekuensi. */
+  R6: function (snap, row, i) {
+    var sch = row.f['Schedule Visit'];
+    if (!sch) {
+      if (!rscVisitOptional_(row)) rscAddErr_(snap, i, 'R6', 'Schedule Visit wajib diisi.');
+      return;
+    }
+    if (rscVisitOptional_(row)) return;
+    var msgs = RSC_STD_VALIDATE_SCHEDULE_RULES_20260814_(row.f['Visit Category'], sch);
+    for (var m = 0; m < msgs.length; m++) rscAddErr_(snap, i, 'R6', msgs[m]);
+  },
+
+  /** R9 — periode relasi harus naik. */
+  R9: function (snap, row, i) {
+    if (rscRelOptional_(row)) return;
+    var vf = row.f['Valid From'], vt = row.f['Valid To'];
+    if (!vf || !vt || !rscIsValidDateStr_(vf) || !rscIsValidDateStr_(vt)) return;
+    if (vt <= vf) {
+      rscAddErr_(snap, i, 'R9', 'Valid To harus lebih besar dari Valid From. Actual=' + vf + ' s/d ' + vt + '.');
+    }
+  },
+
+  /** R9A — Change Rolling normal wajib open-ended 9999-12-31. */
+  R9A: function (snap, row, i) {
+    if (rscRelOptional_(row) || row.isTB) return;
+    var vt = row.f['Valid To'];
+    if (!vt || !rscIsValidDateStr_(vt)) return;
+    if (vt !== OPEN_ENDED_DATE_TEXT) {
+      rscAddErr_(snap, i, 'R9A', 'Valid To harus ' + OPEN_ENDED_DATE_TEXT +
+        ' untuk Change Rolling selain Toko Bangkrut. Actual=' + vt + '.');
+    }
+  },
+
+  /** R10 — periode visit harus naik. */
+  R10: function (snap, row, i) {
+    if (rscVisitOptional_(row)) return;
+    var vvf = row.f['Visit Valid From'], vvt = row.f['Visit Valid To'];
+    if (!vvf || !vvt || !rscIsValidDateStr_(vvf) || !rscIsValidDateStr_(vvt)) return;
+    if (vvt <= vvf) {
+      rscAddErr_(snap, i, 'R10', 'Visit Valid To harus lebih besar dari Visit Valid From. Actual=' +
+        vvf + ' s/d ' + vvt + '.');
+    }
+  },
+
+  /** R11 — periode visit harus berada di dalam periode relasi. */
+  R11: function (snap, row, i) {
+    if (rscVisitOptional_(row) || rscRelOptional_(row)) return;
     var vf = row.f['Valid From'], vt = row.f['Valid To'];
     var vvf = row.f['Visit Valid From'], vvt = row.f['Visit Valid To'];
-    if (vf && vt && vf > vt) rscAddErr_(ctx, i, 'R4', 'Valid From (' + vf + ') tidak boleh melewati Valid To (' + vt + ').');
-    if (vvf && vvt && vvf > vvt) rscAddErr_(ctx, i, 'R4', 'Visit Valid From (' + vvf + ') tidak boleh melewati Visit Valid To (' + vvt + ').');
-    if (spec.key !== 'ROLLING') return;
-
-    var reason = row.f['Reason'];
-    var mode = (row.cso && row.cso.yes) ? row.cso.mode : '';
-    var policy = RSC_PERF11_RESOLVE_ROLLING_DATE_POLICY_20260819_(reason, mode, vf, ctx.masters.dateNew);
-
-    if (rscKey_(reason) === rscKey_('Rolling')) {
-      if (policy.policy === 'ROLLING_HARDCODED' && vf && vf !== ctx.masters.dateNew) {
-        rscAddErr_(ctx, i, 'R4', 'Reason Rolling: Valid From harus ' + ctx.masters.dateNew + ', ditemukan ' + vf + '.');
-      }
-      if (vvf && vvf !== ctx.masters.dateNew) {
-        rscAddErr_(ctx, i, 'R4', 'Reason Rolling: Visit Valid From harus ' + ctx.masters.dateNew + ', ditemukan ' + vvf + '.');
-      }
-    } else if (rscKey_(reason) === rscKey_('Toko Bangkrut')) {
-      if (vt && vt !== ctx.masters.dateClose) {
-        rscAddErr_(ctx, i, 'R4', 'Reason Toko Bangkrut: Valid To harus ' + ctx.masters.dateClose + ', ditemukan ' + vt + '.');
-      }
-      if (vvt && vvt !== ctx.masters.dateClose) {
-        rscAddErr_(ctx, i, 'R4', 'Reason Toko Bangkrut: Visit Valid To harus ' + ctx.masters.dateClose + ', ditemukan ' + vvt + '.');
-      }
+    var outside = (vvf && vf && rscIsValidDateStr_(vvf) && rscIsValidDateStr_(vf) && vvf < vf) ||
+                  (vvt && vt && rscIsValidDateStr_(vvt) && rscIsValidDateStr_(vt) && vvt > vt);
+    if (outside) {
+      rscAddErr_(snap, i, 'R11', 'Periode Visit Valid harus berada di dalam Valid From - Valid To. Actual visit=' +
+        (vvf || '-') + ' s/d ' + (vvt || '-') + ', relation=' + (vf || '-') + ' s/d ' + (vt || '-') + '.');
     }
   },
 
-  /** R5 — Visit Category, Visit Type, Reason. */
-  R5: function (ctx, row, i) {
-    var cat = row.f['Visit Category'];
-    if (cat && VISIT_CATEGORY_OPTIONS.indexOf(cat) < 0) {
-      rscAddErr_(ctx, i, 'R5', 'Visit Category "' + cat + '" tidak valid. Gunakan ' + VISIT_CATEGORY_OPTIONS.join(', ') + '.');
-    }
+  /** R12 — Visit Type wajib dan harus 01..12. */
+  R12: function (snap, row, i) {
     var typ = row.f['Visit Type'];
-    if (typ) {
-      var t2 = typ.length === 1 ? '0' + typ : typ;
-      if (VISIT_TYPE_OPTIONS.indexOf(t2) < 0) {
-        rscAddErr_(ctx, i, 'R5', 'Visit Type "' + typ + '" tidak valid. Gunakan 01 sampai 12 (2 digit).');
-      } else if (t2 !== typ) {
-        rscAddErr_(ctx, i, 'R5', 'Visit Type harus 2 digit. Tulis "' + t2 + '", bukan "' + typ + '".');
-      }
-    }
-    var reason = row.f['Reason'];
-    if (reason && REASON_OPTIONS.indexOf(reason) < 0) {
-      rscAddErr_(ctx, i, 'R5', 'Reason "' + reason + '" tidak valid. Gunakan ' + REASON_OPTIONS.join(' atau ') + '.');
-    }
-  },
-
-  /** R6 — Schedule Visit harus konsisten dengan Visit Category. */
-  R6: function (ctx, row, i) {
-    var cat = row.f['Visit Category'];
-    var sch = rscParseSchedule_(row.f['Schedule Visit']);
-    if (!sch.tokens.length) return;
-
-    if (sch.invalid.length) {
-      rscAddErr_(ctx, i, 'R6', 'Token Schedule Visit tidak dikenal: ' + sch.invalid.join(', ') +
-        '. Format yang benar W1M sampai W4SU.');
+    if (!typ) {
+      if (!rscVisitOptional_(row)) rscAddErr_(snap, i, 'R12', 'Visit Type wajib diisi.');
       return;
     }
-    if (rscUniq_(sch.valid).length !== sch.valid.length) {
-      rscAddErr_(ctx, i, 'R6', 'Schedule Visit mengandung token duplikat: ' + sch.tokens.join(',') + '.');
-      return;
-    }
-    if (!cat || VISIT_CATEGORY_OPTIONS.indexOf(cat) < 0) return;
-
-    var need = VISIT_CATEGORY_FREQUENCY[cat];
-    if (sch.valid.length !== need) {
-      rscAddErr_(ctx, i, 'R6', 'Visit Category ' + cat + ' membutuhkan ' + need +
-        ' token Schedule Visit, ditemukan ' + sch.valid.length + ' (' + sch.tokens.join(',') + ').');
-      return;
-    }
-    var days = Object.keys(sch.weekdays);
-    var weeks = Object.keys(sch.weeks).sort().join(',');
-
-    if (cat === 'F8') {
-      if (days.length !== 2) {
-        rscAddErr_(ctx, i, 'R6', 'F8 harus 2 hari kunjungan x 4 minggu. Ditemukan ' + days.length + ' hari.');
-      } else if (weeks !== '1,2,3,4') {
-        rscAddErr_(ctx, i, 'R6', 'F8 harus mencakup minggu 1,2,3,4. Ditemukan minggu ' + weeks + '.');
-      }
-      return;
-    }
-    if (days.length !== 1) {
-      rscAddErr_(ctx, i, 'R6', 'Semua token Schedule Visit harus pada hari yang sama. Ditemukan hari: ' + days.join(',') + '.');
-      return;
-    }
-    if (cat === 'F4' && weeks !== '1,2,3,4') {
-      rscAddErr_(ctx, i, 'R6', 'F4 harus mencakup minggu 1,2,3,4. Ditemukan minggu ' + weeks + '.');
-    }
-    if (cat === 'F2' && weeks !== '1,3' && weeks !== '2,4') {
-      rscAddErr_(ctx, i, 'R6', 'F2 harus berpola minggu 1&3 atau 2&4. Ditemukan minggu ' + weeks + '.');
-    }
-  },
-
-  /** R9 — Salesman: format dan keberadaan di m_sales_info. */
-  R9: function (ctx, row, i) {
-    var sid = RSC_NORMALIZE_ID_(row.f['Salesman ID']);
-    if (sid && !/^[A-Z0-9]{6,12}$/.test(sid)) {
-      rscAddErr_(ctx, i, 'R9', 'Salesman ID "' + sid + '" tidak sesuai format.');
-    }
-    var bp = row.f['Salesman BP Type'];
-    if (bp && !/^Z[A-Z]\d{2}$/.test(bp)) {
-      rscAddErr_(ctx, i, 'R9', 'Salesman BP Type "' + bp + '" tidak sesuai format (contoh ZD01).');
-    }
-    var idx = ctx.masters.idx && ctx.masters.idx.SALESMAN;
-    if (!idx || !idx.available) { ctx.skipped['R9-master'] = 'master m_sales_info tidak tersedia'; return; }
-    if (sid && !idx.map[sid]) {
-      rscAddErr_(ctx, i, 'R9', 'Salesman ID "' + sid + '" tidak ditemukan pada master m_sales_info.');
-    }
-  },
-
-  /** R10 — Customer: format, keberadaan di m_bp_general_view, dan BP Type. */
-  R10: function (ctx, row, i) {
-    var cid = RSC_NORMALIZE_ID_(row.f['Customer ID'] || row.f['BP Number Source']);
-    if (!cid) return;
-    if (!/^\d{6,12}$/.test(cid)) {
-      rscAddErr_(ctx, i, 'R10', 'Customer ID "' + cid + '" harus berupa 6-12 digit angka.');
-      return;
-    }
-    var idx = ctx.masters.idx && ctx.masters.idx.BP;
-    if (!idx || !idx.available) { ctx.skipped['R10-master'] = 'master m_bp_general_view tidak tersedia'; return; }
-    var recs = idx.map[cid];
-    if (!recs) {
-      rscAddErr_(ctx, i, 'R10', 'Customer ID "' + cid + '" tidak ditemukan pada master BP.');
-      return;
-    }
-    var rec = rscRecObj_(idx, recs[0]);
-    var off = row.f['Sales Office'];
-    var masterOff = RSC_NORMALIZE_ID_(rec['Sales Office']);
-    if (off && masterOff && masterOff !== off) {
-      rscAddErr_(ctx, i, 'R10', 'Customer ID "' + cid + '" terdaftar pada Sales Office ' + masterOff +
-        ', tidak sesuai dengan isian ' + off + '.');
-    }
-    var bpType = row.f['Salesman BP Type'];
-    var masterType = RSC_NORMALIZE_ID_(rec['Salesman BP Type']);
-    if (bpType && masterType && masterType !== bpType) {
-      rscAddErr_(ctx, i, 'R10', 'Salesman BP Type "' + bpType + '" berbeda dengan master (' + masterType + ').');
+    if (VISIT_TYPE_OPTIONS.indexOf(typ) < 0) {
+      rscAddErr_(snap, i, 'R12', 'Visit Type harus 01 sampai 12 dan tetap 2 digit. Actual=' + typ + '.');
     }
   }
 };
 
-/* --------------------------- RULE LINTAS BARIS --------------------------- */
-
 var RSC_TABLE_RULES = {
 
   /** R7 — Customer + Salesman yang sama wajib punya Schedule Visit identik. */
-  R7: function (ctx) {
+  R7: function (snap) {
     var groups = {};
-    for (var i = 0; i < ctx.rows.length; i++) {
-      var f = ctx.rows[i].f;
-      var cid = RSC_NORMALIZE_ID_(f['Customer ID']), sid = RSC_NORMALIZE_ID_(f['Salesman ID']);
+    for (var i = 0; i < snap.rows.length; i++) {
+      var row = snap.rows[i];
+      if (rscVisitOptional_(row)) continue;
+      var cid = row.f['Customer ID'], sid = row.f['Salesman ID'];
       if (!cid || !sid) continue;
       var key = cid + '|' + sid;
-      var sch = rscParseSchedule_(f['Schedule Visit']).canonical;
+      var sch = row.f['Schedule Visit'] || '';
       if (!groups[key]) groups[key] = { variants: {}, order: [] };
       if (!groups[key].variants[sch]) { groups[key].variants[sch] = []; groups[key].order.push(sch); }
-      groups[key].variants[sch].push(ctx.rows[i].sheetRow);
+      groups[key].variants[sch].push(row.sheetRow);
     }
     for (var k in groups) {
       if (!Object.prototype.hasOwnProperty.call(groups, k)) continue;
@@ -1907,26 +2738,21 @@ var RSC_TABLE_RULES = {
       for (var v2 = 0; v2 < g.order.length; v2++) {
         var list = g.variants[g.order[v2]];
         for (var rr = 0; rr < list.length; rr++) {
-          var idx = rscRowIndexBySheetRow_(ctx, list[rr]);
-          if (idx >= 0) rscAddErr_(ctx, idx, 'R7', msg);
+          var idx = rscRowIndexBySheetRow_(snap, list[rr]);
+          if (idx >= 0) rscAddErr_(snap, idx, 'R7', msg);
         }
       }
     }
   },
 
-  /**
-   * R8a — duplikat kunci dalam template.
-   * Baris Change Schedule Only dikecualikan sesuai aturan CASE 1/CASE 2.
-   */
-  R8a: function (ctx) {
-    var keyFields = ctx.spec.key === 'ROLLING'
-      ? ['Customer ID', 'Relationship', 'Salesman ID', 'Valid To']
-      : ctx.spec.required.slice(0, Math.min(4, ctx.spec.required.length));
+  /** R8a — duplikat Customer+Relationship+Salesman+Valid To dalam template. */
+  R8a: function (snap) {
+    var keyFields = ['Customer ID', 'Relationship', 'Salesman ID', 'Valid To'];
     var seen = {};
-    for (var i = 0; i < ctx.rows.length; i++) {
-      if (ctx.rows[i].cso && ctx.rows[i].cso.yes) continue;
+    for (var i = 0; i < snap.rows.length; i++) {
+      if (snap.rows[i].cso && snap.rows[i].cso.yes) continue;   // Change Schedule Only dikecualikan
       var parts = [];
-      for (var k = 0; k < keyFields.length; k++) parts.push(ctx.rows[i].f[keyFields[k]] || '');
+      for (var k = 0; k < keyFields.length; k++) parts.push(snap.rows[i].f[keyFields[k]] || '');
       var key = parts.join('|');
       if (key.replace(/\|/g, '') === '') continue;
       if (!seen[key]) seen[key] = [];
@@ -1936,59 +2762,315 @@ var RSC_TABLE_RULES = {
       if (!Object.prototype.hasOwnProperty.call(seen, kk)) continue;
       if (seen[kk].length < 2) continue;
       var rowsTxt = [];
-      for (var a = 0; a < seen[kk].length; a++) rowsTxt.push(ctx.rows[seen[kk][a]].sheetRow);
+      for (var a = 0; a < seen[kk].length; a++) rowsTxt.push(snap.rows[seen[kk][a]].sheetRow);
       var label = rscRowsLabel_(rowsTxt);
       for (var b = 0; b < seen[kk].length; b++) {
-        rscAddErr_(ctx, seen[kk][b], 'R8',
+        rscAddErr_(snap, seen[kk][b], 'R8',
           'R8a: key ' + keyFields.join(' + ') + ' duplikat dalam template (row ' + label + ').');
       }
     }
   },
 
-  /** R8b — bentrok dengan relasi aktif di m_bp_relation. */
-  R8b: function (ctx) {
-    var idx = ctx.masters.idx && ctx.masters.idx.RELATION;
-    if (!idx || !idx.available) { ctx.skipped['R8b'] = 'master m_bp_relation tidak tersedia'; return; }
-    for (var i = 0; i < ctx.rows.length; i++) {
-      var row = ctx.rows[i], f = row.f;
-      if (rscKey_(f['Reason']) === rscKey_('Toko Bangkrut')) continue;
+  /** R8b — key yang sama sudah ada di m_bp_relation. CSO exact dikecualikan. */
+  R8b: function (snap) {
+    var relCtx = snap.relCtx;
+    if (!relCtx || !relCtx.available) { snap.skipped['R8b'] = 'master m_bp_relation tidak tersedia'; return; }
+    for (var i = 0; i < snap.rows.length; i++) {
+      var row = snap.rows[i], f = row.f;
       if (row.cso && row.cso.yes) continue;
-      var cid = RSC_NORMALIZE_ID_(f['Customer ID']);
-      var rel = f['Relationship'];
-      if (!cid || !rel) continue;
-      var recs = idx.map[cid];
-      if (!recs) continue;
-      for (var r = 0; r < recs.length; r++) {
-        if (RSC_NORMALIZE_ID_(recs[r][0]) !== rel) continue;
-        var mSid = RSC_NORMALIZE_ID_(recs[r][1]);
-        var mVt = rscDateStr_(recs[r][3]);
-        if (mSid && mSid !== RSC_NORMALIZE_ID_(f['Salesman ID']) && (!mVt || !f['Valid From'] || mVt >= f['Valid From'])) {
-          rscAddErr_(ctx, i, 'R8',
-            'R8b: relasi aktif di master masih memakai Salesman ' + mSid + ' (Valid To ' + (mVt || '-') +
-            '). Tutup relasi lama sebelum rolling ke ' + f['Salesman ID'] + '.');
-          break;
-        }
+      var cust = f['Customer ID'], rel = f['Relationship'], sls = f['Salesman ID'], vt = f['Valid To'];
+      if (!cust || !rel || !sls || !vt) continue;
+      if (relCtx.exactKey[cust + '|' + rel + '|' + sls + '|' + vt]) {
+        rscAddErr_(snap, i, 'R8', 'R8b: key Customer ID + Relationship + Salesman ID + Valid To sudah ada di ' +
+          'm_bp_relation. Actual=' + cust + ' + ' + rel + ' + ' + sls + ' + ' + vt + '.');
       }
     }
   },
 
-  /** TB — Toko Bangkrut wajib punya jadwal aktif di m_visit_schedule. */
-  TB: function (ctx) {
-    var idx = ctx.masters.idx && ctx.masters.idx.VISIT;
-    var hasIdx = !!(idx && idx.available);
-    if (!hasIdx) ctx.skipped['TB'] = 'master m_visit_schedule tidak tersedia';
-    for (var i = 0; i < ctx.rows.length; i++) {
-      var f = ctx.rows[i].f;
-      if (rscKey_(f['Reason']) !== rscKey_('Toko Bangkrut')) continue;
-      if (f['Valid To'] === OPEN_ENDED_DATE_TEXT) {
-        rscAddErr_(ctx, i, 'TB', 'Toko Bangkrut: Valid To wajib tanggal penutupan, bukan ' + OPEN_ENDED_DATE_TEXT + '.');
+  /** TB — Toko Bangkrut: tanggal penutupan dan keberadaan key di m_visit_schedule. */
+  TB: function (snap) {
+    var dateClose = snap.masters.dateClose;
+    var mvs = snap.mvs || { available: false, map: {} };
+    if (!mvs.available) snap.skipped['TB-mvs'] = 'master m_visit_schedule tidak tersedia';
+
+    for (var i = 0; i < snap.rows.length; i++) {
+      var row = snap.rows[i], f = row.f;
+      if (!row.isTB) continue;
+      var relOpt = rscRelOptional_(row), visitOpt = rscVisitOptional_(row);
+
+      if (!relOpt) {
+        if (f['Valid To'] && f['Valid To'] !== dateClose) {
+          rscAddErr_(snap, i, 'TB', 'Toko Bangkrut: Valid To harus ' + dateClose + '. Actual=' + f['Valid To'] + '.');
+        }
+        if (row.tbValidFromSource === 'NOT_FOUND') {
+          rscAddErr_(snap, i, 'TB', 'Toko Bangkrut: Valid From tidak dapat ditentukan dari m_bp_relation. Actual=' +
+            f['Customer ID'] + ' + ' + f['Relationship'] + ' + ' + f['Salesman ID'] + '.');
+        }
       }
-      if (!hasIdx) continue;
-      var key = RSC_NORMALIZE_ID_(f['Customer ID']) + '|' + RSC_NORMALIZE_ID_(f['Salesman ID']);
-      if (!idx.map[key]) rscAddErr_(ctx, i, 'TB', 'Toko Bangkrut: key tidak ditemukan di m_visit_schedule.');
+      if (visitOpt) continue;
+
+      if (f['Visit Valid To'] && f['Visit Valid To'] !== dateClose) {
+        rscAddErr_(snap, i, 'TB', 'Toko Bangkrut: Visit Valid To harus ' + dateClose +
+          '. Actual=' + f['Visit Valid To'] + '.');
+      }
+      var missing = [];
+      if (!f['Visit Category']) missing.push('Visit Category');
+      if (!f['Customer ID']) missing.push('Customer ID');
+      if (!f['Salesman ID']) missing.push('Salesman ID');
+      if (!f['Visit Type']) missing.push('Visit Type');
+      if (missing.length) {
+        rscAddErr_(snap, i, 'TB', 'Toko Bangkrut: key m_visit_schedule wajib lengkap ' +
+          '(Visit Category + Customer ID + Salesman ID + Visit Type). Kolom kosong: ' + missing.join(', ') + '.');
+        continue;
+      }
+      if (!mvs.available) continue;
+      if (!mvs.map[row.mvsKey]) {
+        rscAddErr_(snap, i, 'TB', 'Toko Bangkrut: key tidak ditemukan di m_visit_schedule. Actual=' +
+          row.mvsKey.split('|').join(' + ') + '.');
+        continue;
+      }
+      if (!row.mvsPicked) {
+        rscAddErr_(snap, i, 'TB', 'Toko Bangkrut: Visit Valid From tidak sesuai m_visit_schedule. Expected=[none].');
+        continue;
+      }
+      if (f['Visit Valid From'] !== row.mvsPicked) {
+        rscAddErr_(snap, i, 'TB', 'Toko Bangkrut: Visit Valid From tidak sesuai m_visit_schedule. Expected=' +
+          row.mvsPicked + ', actual=' + f['Visit Valid From'] + '.');
+      }
     }
   }
 };
+
+/* -------------------------------------------------------------
+ * 7.9 VALIDATOR TAMBAHAN — Change Sales Office & Change Salesman Type
+ * ----------------------------------------------------------- */
+
+function rscDupCheck_(snap, keyFields, code) {
+  var seen = {};
+  for (var i = 0; i < snap.rows.length; i++) {
+    var parts = [];
+    for (var k = 0; k < keyFields.length; k++) parts.push(snap.rows[i].f[keyFields[k]] || '');
+    var key = parts.join('|').toUpperCase();
+    if (key.replace(/\|/g, '') === '') continue;
+    if (!seen[key]) seen[key] = [];
+    seen[key].push(i);
+  }
+  for (var kk in seen) {
+    if (!Object.prototype.hasOwnProperty.call(seen, kk)) continue;
+    if (seen[kk].length < 2) continue;
+    var rows = [];
+    for (var a = 0; a < seen[kk].length; a++) rows.push(snap.rows[seen[kk][a]].sheetRow);
+    var label = rscRowsLabel_(rows);
+    for (var b = 0; b < seen[kk].length; b++) {
+      rscAddErr_(snap, seen[kk][b], code,
+        'Key ' + keyFields.join(' + ') + ' duplikat dalam template (row ' + label + ').');
+    }
+  }
+}
+
+/** Change Sales Office (PERF26 §17). */
+function RSC_STD_VALIDATE_SALES_OFFICE_20260814_(snap) {
+  var em = snap.masters.office;
+  var emOk = !!(em && em.available);
+  var hier = !!(emOk && em.hasHierarchy);
+  if (!emOk) snap.skipped['SO-em'] = 'master em tidak tersedia';
+
+  for (var i = 0; i < snap.rows.length; i++) {
+    var f = snap.rows[i].f;
+    var bp = rscText_(f['BP Number Source']);
+    if (!bp) rscAddErr_(snap, i, 'SO1', 'BP Number Source wajib diisi.');
+    else if (!/^\d+$/.test(RSC_NORMALIZE_ID_(bp))) {
+      rscAddErr_(snap, i, 'SO1', 'BP Number Source "' + bp + '" harus berupa angka.');
+    }
+
+    var plant = f['Delivering Plant'];
+    if (!plant) rscAddErr_(snap, i, 'SO2', 'Delivering Plant wajib diisi.');
+    else if (!RSC_PLANT_FORMAT_RE.test(plant)) {
+      rscAddErr_(snap, i, 'SO2', 'Delivering Plant "' + plant + '" harus 4 karakter alphanumeric.');
+    }
+
+    var org = f['Sales Organization'], dist = f['Distr. Channel'], div = f['Division'], off = f['Sales Office'];
+    if (!org) rscAddErr_(snap, i, 'SO3', 'Sales Organization wajib diisi.');
+    if (!dist) rscAddErr_(snap, i, 'SO4', 'Distribution Channel wajib diisi.');
+    if (!div) rscAddErr_(snap, i, 'SO5', 'Division wajib diisi.');
+    if (!off) rscAddErr_(snap, i, 'SO6', 'Sales Office wajib diisi.');
+    if (!emOk || !hier) continue;
+
+    if (org && !em.orgs[org]) {
+      rscAddErr_(snap, i, 'SO3', 'Sales Organization "' + org + '" tidak terdaftar pada master em.');
+      continue;
+    }
+    if (org && dist && !em.orgDist[org + '|' + dist]) {
+      rscAddErr_(snap, i, 'SO4', 'Distribution Channel "' + dist + '" tidak relevan untuk Sales Organization ' + org + '.');
+      continue;
+    }
+    if (org && dist && div && !em.orgDistDiv[org + '|' + dist + '|' + div]) {
+      rscAddErr_(snap, i, 'SO5', 'Division "' + div + '" tidak relevan untuk ' + org + ' + ' + dist + '.');
+      continue;
+    }
+    if (org && dist && div && off && !em.full[org + '|' + dist + '|' + div + '|' + off]) {
+      rscAddErr_(snap, i, 'SO6', 'Sales Office "' + off + '" tidak relevan untuk ' + org + ' + ' + dist + ' + ' + div + '.');
+    }
+  }
+  rscDupCheck_(snap, snap.spec.dupKey, 'SO7');
+}
+
+/** Change Salesman Type (PERF26 §18). */
+function RSC_STD_VALIDATE_SALESMAN_TYPE_20260814_(snap) {
+  var em = snap.masters.office;
+  var emOk = !!(em && em.available);
+  if (!emOk) snap.skipped['ST-em'] = 'master em tidak tersedia';
+
+  var lov = {};
+  for (var n = 0; n < SALES_TYPE_OPTIONS.length; n++) lov[RSC_NORMALIZE_ID_(SALES_TYPE_OPTIONS[n])] = true;
+
+  for (var i = 0; i < snap.rows.length; i++) {
+    var row = snap.rows[i], f = row.f;
+
+    var sls = f['Salesman ID'];
+    if (!sls) rscAddErr_(snap, i, 'ST1', 'Salesman ID wajib diisi.');
+    else if (!RSC_STD_IS_DUMMY_SALESMAN_20260814_(sls) && !RSC_STD_IS_NORMAL_SALESMAN_20260814_(sls)) {
+      rscAddErr_(snap, i, 'ST1', 'Salesman ID "' + sls + '" tidak sesuai format normal maupun Dummy.');
+    }
+
+    var org = f['Sales Organization'], off = f['Sales Office'];
+    if (!org) rscAddErr_(snap, i, 'ST2', 'Sales Organization wajib diisi.');
+    else if (emOk && !em.orgs[org]) {
+      rscAddErr_(snap, i, 'ST2', 'Sales Organization "' + org + '" tidak terdaftar pada master em.');
+    }
+    if (!off) rscAddErr_(snap, i, 'ST3', 'Sales Office wajib diisi.');
+    else if (emOk && !em.map[off]) {
+      rscAddErr_(snap, i, 'ST3', 'Sales Office "' + off + '" tidak terdaftar pada master em.');
+    } else if (emOk && off && org && em.map[off] && em.map[off].org && em.map[off].org !== org) {
+      rscAddErr_(snap, i, 'ST3', 'Sales Office "' + off + '" bukan milik Sales Organization ' + org + '.');
+    }
+
+    var typ = f['Sales Type'];
+    if (!typ) rscAddErr_(snap, i, 'ST4', 'Sales Type wajib diisi.');
+    else if (!lov[typ]) rscAddErr_(snap, i, 'ST4', 'Sales Type "' + typ + '" harus dipilih dari LOV New code S4.');
+
+    var vf = f['Valid From'], vt = f['Valid To'];
+    var dFrom = row.dates['Valid From'] || {}, dTo = row.dates['Valid To'] || {};
+    if (!vf && !dFrom.hadInput) rscAddErr_(snap, i, 'ST5', 'Valid From wajib diisi.');
+    else if (!vf || !rscIsValidDateStr_(vf)) {
+      rscAddErr_(snap, i, 'ST5', 'Format Valid From tidak valid: "' + (dFrom.raw || vf) + '". Gunakan YYYY-MM-DD.');
+    }
+    if (!vt && !dTo.hadInput) rscAddErr_(snap, i, 'ST6', 'Valid To wajib diisi.');
+    else if (!vt || !rscIsValidDateStr_(vt)) {
+      rscAddErr_(snap, i, 'ST6', 'Format Valid To tidak valid: "' + (dTo.raw || vt) + '". Gunakan YYYY-MM-DD.');
+    } else if (vf && rscIsValidDateStr_(vf) && vt <= vf) {
+      rscAddErr_(snap, i, 'ST6', 'Valid To (' + vt + ') harus lebih besar dari Valid From (' + vf + ').');
+    }
+  }
+  rscDupCheck_(snap, snap.spec.dupKey, 'ST7');
+}
+
+/* -------------------------------------------------------------
+ * 7.10 ORCHESTRATION
+ * ----------------------------------------------------------- */
+
+/** Rakit status O:P dari daftar error tiap baris. */
+function rscAssembleResult_(snap, timing) {
+  var status = [], detail = [], errorRows = 0, byCode = {}, csoRows = 0, ssRows = 0, tbRows = 0;
+  var maxChars = RSC_STANDARD_VALIDATION_V27_20260814.msgMaxDetailChars;
+  for (var r = 0; r < snap.rows.length; r++) {
+    var row = snap.rows[r];
+    if (row.cso && row.cso.yes) csoRows++;
+    if (row.ssPair) ssRows++;
+    if (row.isTB) tbRows++;
+    var errs = rscUniq_(snap.errors[r]);
+    if (errs.length) {
+      errorRows++;
+      status.push('ERROR');
+      var joined = errs.join(' | ');
+      if (joined.length > maxChars) joined = joined.substring(0, maxChars - 20) + ' ...(dipotong)';
+      detail.push(joined);
+      for (var e = 0; e < errs.length; e++) {
+        var code = (errs[e].match(/^\[([A-Za-z0-9]+)\]/) || [])[1] || 'X';
+        byCode[code] = (byCode[code] || 0) + 1;
+      }
+    } else {
+      status.push('OK');
+      detail.push('');
+    }
+  }
+  return {
+    ctx: snap, spec: snap.spec, rowCount: snap.rows.length, errorRows: errorRows,
+    changeScheduleOnlyRows: csoRows, ssPairRows: ssRows, tokoBangkrutRows: tbRows,
+    mutatedRows: snap.mutations || 0,
+    status: status, detail: detail, byCode: byCode, skipped: snap.skipped,
+    timing: timing
+  };
+}
+
+/**
+ * Jalankan seluruh business rule final atas snapshot yang sudah dimutasi:
+ * S0, R1, R1A, R2, R3, R4, R5, R6, R7, R8a, R8b, R9, R9A, R10, R11, R12, TB.
+ */
+function RSC_V28_3_VALIDATE_ROLLING_SNAPSHOT_RULES_20260814_(snap) {
+  var spec = snap.spec, i, r;
+  for (r = 0; r < snap.rows.length; r++) {
+    for (i = 0; i < spec.rowRules.length; i++) {
+      var fn = RSC_ROW_RULES[spec.rowRules[i]];
+      if (fn) fn(snap, snap.rows[r], r);
+    }
+  }
+  for (i = 0; i < spec.tableRules.length; i++) {
+    var tf = RSC_TABLE_RULES[spec.tableRules[i]];
+    if (tf) tf(snap);
+  }
+  return snap;
+}
+
+/** Pipeline utama Rolling (PERF26 §1). */
+function RSC_V28_3_VALIDATE_ROLLING_SNAPSHOT_20260814_(spec, values, masters) {
+  var t0 = Date.now();
+  var snap = RSC_V28_3_CREATE_ROLLING_SNAPSHOT_20260814_(spec, values, masters);
+  var tNorm = Date.now();
+
+  snap.relCtx = RSC_STD_LOAD_RELATION_CONTEXT_20260814_(snap);
+  RSC_STD_DETECT_CHANGE_SCHEDULE_ONLY_20260819_(snap, snap.relCtx);
+  snap.mvs = RSC_MVS_getIndexSubset_20260819_(snap);
+  RSC_V28_3_APPLY_ROLLING_MUTATIONS_20260814_(snap, snap.relCtx, snap.mvs);
+  var tMut = Date.now();
+
+  RSC_V28_3_VALIDATE_ROLLING_SNAPSHOT_RULES_20260814_(snap);
+  var tRules = Date.now();
+
+  return rscAssembleResult_(snap, {
+    normalizeSec: rscRound_((tNorm - t0) / 1000, 3),
+    mutateSec: rscRound_((tMut - tNorm) / 1000, 3),
+    rulesSec: rscRound_((tRules - tMut) / 1000, 3)
+  });
+}
+
+/** Entry Rolling. */
+function RSC_STD_VALIDATE_ROLLING_20260814_(spec, values, masters) {
+  return RSC_V28_3_VALIDATE_ROLLING_SNAPSHOT_20260814_(spec, values, masters);
+}
+
+/** Router Active/Bulk ke jenis validator. Semua jalur memakai core yang sama. */
+function RSC_STD_VALIDATE_ONE_SHEET_20260814_(spec, values, masters) {
+  if (spec.validator === 'ROLLING') return RSC_STD_VALIDATE_ROLLING_20260814_(spec, values, masters);
+
+  var t0 = Date.now();
+  var snap = RSC_V28_3_CREATE_ROLLING_SNAPSHOT_20260814_(spec, values, masters);
+  var tNorm = Date.now();
+  if (spec.validator === 'SALES_OFFICE') RSC_STD_VALIDATE_SALES_OFFICE_20260814_(snap);
+  else if (spec.validator === 'SALESMAN_TYPE') RSC_STD_VALIDATE_SALESMAN_TYPE_20260814_(snap);
+  var tRules = Date.now();
+
+  return rscAssembleResult_(snap, {
+    normalizeSec: rscRound_((tNorm - t0) / 1000, 3),
+    mutateSec: 0,
+    rulesSec: rscRound_((tRules - tNorm) / 1000, 3)
+  });
+}
+
+/** Nama lama dipertahankan untuk seluruh pemanggil internal. */
+function rscValidateValues_(spec, values, masters) {
+  return RSC_STD_VALIDATE_ONE_SHEET_20260814_(spec, values, masters);
+}
 
 /**
  * Verifikasi header. Format pesan dipertahankan supaya histori feedback
@@ -2007,74 +3089,54 @@ function rscCheckLayout_(spec, headerRow) {
   return 'Layout A:' + rscColLetter_(spec.header.length) + ' tidak sesuai template FSD. ' + problems.join('; ');
 }
 
-/** Jalankan seluruh rule pada nilai mentah satu sheet. */
-function rscValidateValues_(spec, values, masters) {
-  var t0 = Date.now();
-  var ctx = rscBuildContext_(spec, values, masters);
-  if (spec.key === 'ROLLING') rscDetectChangeScheduleOnly_(ctx);
-  var tNorm = Date.now();
-
-  var i, r;
-  for (r = 0; r < ctx.rows.length; r++) {
-    for (i = 0; i < spec.rowRules.length; i++) {
-      var fn = RSC_ROW_RULES[spec.rowRules[i]];
-      if (fn) fn(ctx, ctx.rows[r], r);
-    }
-  }
-  for (i = 0; i < spec.tableRules.length; i++) {
-    var tf = RSC_TABLE_RULES[spec.tableRules[i]];
-    if (tf) tf(ctx);
-  }
-  var tRules = Date.now();
-
-  var status = [], detail = [], errorRows = 0, byCode = {}, csoRows = 0;
-  var maxChars = RSC_STANDARD_VALIDATION_V27_20260814.msgMaxDetailChars;
-  for (r = 0; r < ctx.rows.length; r++) {
-    if (ctx.rows[r].cso && ctx.rows[r].cso.yes) csoRows++;
-    var errs = rscUniq_(ctx.errors[r]);
-    if (errs.length) {
-      errorRows++;
-      status.push('ERROR');
-      var joined = errs.join(' | ');
-      if (joined.length > maxChars) joined = joined.substring(0, maxChars - 20) + ' ...(dipotong)';
-      detail.push(joined);
-      for (var e = 0; e < errs.length; e++) {
-        var code = (errs[e].match(/^\[([A-Za-z0-9]+)\]/) || [])[1] || 'X';
-        byCode[code] = (byCode[code] || 0) + 1;
-      }
-    } else {
-      status.push('OK');
-      detail.push('');
-    }
-  }
-
-  return {
-    ctx: ctx, rowCount: ctx.rows.length, errorRows: errorRows, changeScheduleOnlyRows: csoRows,
-    status: status, detail: detail, byCode: byCode, skipped: ctx.skipped,
-    timing: {
-      normalizeSec: rscRound_((tNorm - t0) / 1000, 3),
-      rulesSec: rscRound_((tRules - tNorm) / 1000, 3)
-    }
-  };
-}
-
 /* =============================================================
- * 8. PENULIS HASIL
+ * 8. PENULIS HASIL + PEWARNAAN STATUS
  * ============================================================= */
 
-function rscWriteResults_(sheet, spec, result, dataRowCount) {
+/**
+ * Tulis kembali baris yang dimutasi (A:N) lalu status O:P dan warnanya.
+ * Hanya baris yang benar-benar berubah yang ditulis, dalam blok berurutan,
+ * supaya formula pada baris lain tidak tersentuh.
+ */
+function RSC_V28_3_WRITE_ROLLING_SNAPSHOT_20260814_(sheet, spec, result, dataRowCount) {
   if (!dataRowCount) return 0;
+  var snap = result.ctx;
+
+  if (result.mutatedRows) {
+    var pending = [];
+    for (var m = 0; m < snap.rows.length; m++) {
+      var row = snap.rows[m];
+      if (!row.changed) continue;
+      var vals = [];
+      for (var c = 0; c < spec.dataCols; c++) {
+        var name = spec.header[c];
+        vals.push(row.f[name] === undefined ? row.raw[c] : row.f[name]);
+      }
+      pending.push({ row: row.sheetRow, values: vals });
+    }
+    pending.sort(function (a, b) { return a.row - b.row; });
+    var i = 0;
+    while (i < pending.length) {
+      var start = i;
+      while (i + 1 < pending.length && pending[i + 1].row === pending[i].row + 1) i++;
+      var block = [];
+      for (var k = start; k <= i; k++) block.push(pending[k].values);
+      sheet.getRange(pending[start].row, 1, block.length, spec.dataCols).setValues(block);
+      i++;
+    }
+  }
+
   var out = [];
-  for (var i = 0; i < dataRowCount; i++) out.push(['', '']);
-  for (var r = 0; r < result.ctx.rows.length; r++) {
-    var pos = result.ctx.rows[r].sheetRow - 2;
+  for (var z = 0; z < dataRowCount; z++) out.push(['', '']);
+  for (var r = 0; r < snap.rows.length; r++) {
+    var pos = snap.rows[r].sheetRow - 2;
     if (pos >= 0 && pos < dataRowCount) out[pos] = [result.status[r], result.detail[r]];
   }
   if (spec.errorCol === spec.statusCol + 1) {
     sheet.getRange(2, spec.statusCol, dataRowCount, 2).setValues(out);
   } else {
     var s = [], d = [];
-    for (var k = 0; k < out.length; k++) { s.push([out[k][0]]); d.push([out[k][1]]); }
+    for (var q = 0; q < out.length; q++) { s.push([out[q][0]]); d.push([out[q][1]]); }
     sheet.getRange(2, spec.statusCol, dataRowCount, 1).setValues(s);
     sheet.getRange(2, spec.errorCol, dataRowCount, 1).setValues(d);
   }
@@ -2082,20 +3144,33 @@ function rscWriteResults_(sheet, spec, result, dataRowCount) {
   return dataRowCount;
 }
 
-/** Warna status mengikuti konvensi lama: hijau OK, merah muda ERROR. */
+function rscWriteResults_(sheet, spec, result, dataRowCount) {
+  return RSC_V28_3_WRITE_ROLLING_SNAPSHOT_20260814_(sheet, spec, result, dataRowCount);
+}
+
+/**
+ * Warna hasil validasi baris:
+ *   OK    -> hijau, status tebal
+ *   ERROR -> merah, status tebal, detail dibungkus (wrap)
+ */
 function rscApplyStatusColors_(sheet, spec, out, dataRowCount) {
   try {
-    var C = TEMPLATE_UI_PARAMETERS.colors;
-    var bg = [];
+    var bg = [], fc = [], fw = [];
     for (var i = 0; i < dataRowCount; i++) {
-      var st = out[i][0];
-      var c = st === 'OK' ? C.ok : (st === 'ERROR' ? C.error : null);
-      bg.push([c, c]);
+      var paint = RSC_UI_STATUS_COLOR_20260820_(out[i][0]);
+      bg.push([paint.bg, paint.bg]);
+      fc.push([paint.font, paint.font]);
+      fw.push([paint.bold ? 'bold' : 'normal', 'normal']);
     }
     if (spec.errorCol === spec.statusCol + 1) {
-      sheet.getRange(2, spec.statusCol, dataRowCount, 2).setBackgrounds(bg);
+      var rng = sheet.getRange(2, spec.statusCol, dataRowCount, 2);
+      rng.setBackgrounds(bg);
+      if (rng.setFontColors) rng.setFontColors(fc);
+      if (rng.setFontWeights) rng.setFontWeights(fw);
+      var det = sheet.getRange(2, spec.errorCol, dataRowCount, 1);
+      if (det.setWrap) det.setWrap(true);
     }
-  } catch (e) { /* warna bersifat kosmetik */ }
+  } catch (e) { /* warna bersifat kosmetik, tidak boleh menggagalkan validasi */ }
 }
 
 function rscEnsureResultHeaders_(sheet, spec) {
@@ -2195,6 +3270,7 @@ function rscJobLogSet_(ss, slot, e, opts) {
     var sh = rscJobLogSheet_(ss);
     var values = rscJobLogRow_(slot, e);
     sh.getRange(row, 1, 1, J.columns.length).setValues([values]);
+    RSC_UI_PAINT_STATUS_COLUMN_20260820_(sh, row, 3, [e.state || ''], 1);
     if (changed || opts.history) rscJobLogPushHistory_(sh, values);
     rscSetProp_(key, sig + '@@' + Date.now());
   } catch (err) { /* dashboard tidak boleh menggagalkan pipeline */ }
@@ -2222,6 +3298,13 @@ function rscJobLogSummary_(ss, runId, stats) {
       'QUEUED', stats.queued, 'ACTIVE', stats.active, 'RETRY', stats.retry + stats.deferred,
       'COMPLETE OK', stats.ok, 'WITH ERRORS', stats.withErrors, 'ERROR/HARD', stats.hard + stats.blocked
     ]]);
+    // Setiap pasangan label+angka diwarnai sesuai arti statusnya.
+    var labels = ['QUEUED', 'ACTIVE', 'RETRY', 'COMPLETE OK', 'COMPLETE WITH ERRORS', 'HARD ERROR'];
+    for (var c = 0; c < labels.length; c++) {
+      RSC_UI_PAINT_STATUS_COLUMN_20260820_(sh, J.counterRow, 1 + c * 2, [labels[c]], 2);
+    }
+    RSC_UI_PAINT_STATUS_COLUMN_20260820_(sh, J.summaryRow, 1,
+      [stats.unfinished ? 'IN PROGRESS' : 'ALL OK'], 2);
   } catch (e) { /* best-effort */ }
 }
 
@@ -2289,6 +3372,9 @@ function rscManifestWriteRows_(sh, rows) {
     var block = [];
     for (var k = start; k <= i; k++) block.push(rows[k].values);
     sh.getRange(rows[start].row, 1, block.length, V.manifestHeaders.length).setValues(block);
+    var statuses = [];
+    for (var z = 0; z < block.length; z++) statuses.push(block[z][RSC_M.STATUS]);
+    RSC_UI_PAINT_STATUS_COLUMN_20260820_(sh, rows[start].row, RSC_M.STATUS + 1, statuses, 1);
     i++;
   }
 }
@@ -2435,7 +3521,12 @@ function rscBuildManifest_(ss, runId) {
   if (sh.getLastRow() > 1) {
     sh.getRange(2, 1, sh.getLastRow() - 1, V.manifestHeaders.length).clearContent();
   }
-  if (out.length) sh.getRange(2, 1, out.length, V.manifestHeaders.length).setValues(out);
+  if (out.length) {
+    sh.getRange(2, 1, out.length, V.manifestHeaders.length).setValues(out);
+    var statuses = [];
+    for (var sIdx = 0; sIdx < out.length; sIdx++) statuses.push(out[sIdx][RSC_M.STATUS]);
+    RSC_UI_PAINT_STATUS_COLUMN_20260820_(sh, 2, RSC_M.STATUS + 1, statuses, 1);
+  }
   stats.total = out.length;
   return stats;
 }
@@ -2496,6 +3587,7 @@ function rscUpdateTask_(ss, task, mutate) {
     mutate(v);
     v[RSC_M.UPDATED_AT] = rscStamp_();
     sh.getRange(task.row, 1, 1, V.manifestHeaders.length).setValues([v]);
+    RSC_UI_PAINT_STATUS_COLUMN_20260820_(sh, task.row, RSC_M.STATUS + 1, [v[RSC_M.STATUS]], 1);
     return { applied: true };
   }, V.commitLockWaitMs);
 }
@@ -3036,6 +4128,9 @@ function rscWriteBackRekapStatus_(ss, runId) {
     col[k] = [v === undefined ? col[k][0] : v];
   }
   master.getRange(L.firstDataRow, L.feedbackCol, n, 1).setValues(col);
+  var paint = [];
+  for (var c2 = 0; c2 < n; c2++) paint.push(col[c2][0]);
+  RSC_UI_PAINT_STATUS_COLUMN_20260820_(master, L.firstDataRow, L.feedbackCol, paint, 1);
   return updates;
 }
 
@@ -3082,14 +4177,22 @@ function RSC_STANDARD_VALIDATE_ACTIVE_SHEET_20260814() {
   for (var k in res.byCode) {
     if (Object.prototype.hasOwnProperty.call(res.byCode, k)) codes.push(k + '=' + res.byCode[k]);
   }
+  // PERF26 §16: Auto Revamp hanya jalan untuk sheet Rolling yang nol error.
+  var auto = RSC_PERF12_AUTO_REVAMP_ACTIVE_AFTER_VALIDATION_20260819_(ss, spec, res);
+
   var notes = (masters.notes || []).join('\n');
   rscAlert_('Validasi selesai — ' + spec.label,
     'Baris     : ' + res.rowCount + '\n' +
     'Error     : ' + res.errorRows + '\n' +
     'Sched only: ' + res.changeScheduleOnlyRows + '\n' +
+    'Dibetulkan: ' + res.mutatedRows + ' baris (auto-replace master/tanggal)\n' +
     (codes.length ? ('Rincian   : ' + codes.join(', ') + '\n') : '') +
+    (auto.ran ? 'Auto Revamp: dijalankan karena 0 error.\n' : '') +
     (notes ? ('\nCatatan master:\n' + notes) : ''));
-  return { rows: res.rowCount, errorRows: res.errorRows, byCode: res.byCode, notes: masters.notes };
+  return {
+    rows: res.rowCount, errorRows: res.errorRows, mutatedRows: res.mutatedRows,
+    byCode: res.byCode, notes: masters.notes, autoRevamp: auto
+  };
 }
 
 /** Menu 2 — Start / Resume Bulk Validation seluruh link kolom E. */
@@ -4334,6 +5437,30 @@ function RSC_PERF11_DIAGNOSE_DB_ACCESS_20260819() {
     }
   }
   if (!ids.length) lines.push('RSC_DB_PARAMETERS.spreadsheetId masih kosong.');
+
+  // Resolusi tiap tabel master: tab mana yang terpakai dan berapa key terbaca.
+  var tables = ['BP', 'RELATION', 'SALESMAN', 'VISIT', 'RELTYPE'];
+  var res = ['RESOLUSI TABEL MASTER'];
+  for (var t = 0; t < tables.length; t++) {
+    var alias = (RSC_DB_PARAMETERS.tables[tables[t]] || []).join(' / ');
+    try {
+      var idx = rscGetIndex_(tables[t]);
+      if (idx && idx.available) {
+        res.push('OK  ' + tables[t] + ' -> tab "' + (idx.sheet || '?') + '"' +
+          (idx.source ? (' di ' + idx.source) : '') +
+          '\n    key=' + Object.keys(idx.map || {}).length + ', baris=' + (idx.rows || 0) +
+          (idx.mode ? (', mode=' + idx.mode) : ''));
+      } else {
+        res.push('--  ' + tables[t] + ' TIDAK DITEMUKAN (' + ((idx && idx.reason) || '-') + ')' +
+          '\n    alias dicari: ' + alias +
+          '\n    rule terkait akan DILEWATI, bukan dijadikan error.');
+      }
+    } catch (eT) {
+      res.push('ERR ' + tables[t] + ': ' + rscClassify_(eT).message);
+    }
+  }
+  lines.push(res.join('\n'));
+
   var text = lines.join('\n\n');
   rscAlert_('Diagnose DB Access / Identity', text);
   return text;
@@ -5261,6 +6388,28 @@ function RSC_RESET_TEMPLATE_REVAMP_JOB_20260722() {
 }
 
 /** Gate otomatis setelah bulk validation selesai. */
+/**
+ * PERF26 §16 — Auto Revamp untuk ACTIVE sheet.
+ * Hanya berjalan bila sheet yang divalidasi persis "Change Rolling & Change
+ * Schedule" DAN hasil validasinya nol error. Selain itu tidak melakukan apa pun.
+ */
+function RSC_PERF12_AUTO_REVAMP_ACTIVE_AFTER_VALIDATION_20260819_(ss, spec, res) {
+  var out = { ran: false, reason: '' };
+  try {
+    if (!spec || spec.key !== 'ROLLING') { out.reason = 'BUKAN_SHEET_ROLLING'; return out; }
+    if (!res || res.errorRows > 0) { out.reason = 'MASIH_ADA_ERROR'; return out; }
+    if (!res.rowCount) { out.reason = 'TIDAK_ADA_BARIS'; return out; }
+    var R = RSC_TEMPLATE_REVAMP_20260722;
+    if (R && R.autoAfterActiveValidation === false) { out.reason = 'DIMATIKAN_PARAMETER'; return out; }
+    out.result = rscRevampFile_(ss.getId(), null);
+    out.ran = true;
+    out.reason = 'OK';
+  } catch (e) {
+    out.reason = 'GAGAL: ' + rscClassify_(e).message;
+  }
+  return out;
+}
+
 function RSC_PERF12_PROCESS_PENDING_BULK_REVAMP_20260819() {
   var V = RSC_STANDARD_VALIDATION_V27_20260814;
   var ss = rscActiveSs_();

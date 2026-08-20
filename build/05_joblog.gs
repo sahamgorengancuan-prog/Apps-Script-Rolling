@@ -82,6 +82,7 @@ function rscJobLogSet_(ss, slot, e, opts) {
     var sh = rscJobLogSheet_(ss);
     var values = rscJobLogRow_(slot, e);
     sh.getRange(row, 1, 1, J.columns.length).setValues([values]);
+    RSC_UI_PAINT_STATUS_COLUMN_20260820_(sh, row, 3, [e.state || ''], 1);
     if (changed || opts.history) rscJobLogPushHistory_(sh, values);
     rscSetProp_(key, sig + '@@' + Date.now());
   } catch (err) { /* dashboard tidak boleh menggagalkan pipeline */ }
@@ -109,5 +110,12 @@ function rscJobLogSummary_(ss, runId, stats) {
       'QUEUED', stats.queued, 'ACTIVE', stats.active, 'RETRY', stats.retry + stats.deferred,
       'COMPLETE OK', stats.ok, 'WITH ERRORS', stats.withErrors, 'ERROR/HARD', stats.hard + stats.blocked
     ]]);
+    // Setiap pasangan label+angka diwarnai sesuai arti statusnya.
+    var labels = ['QUEUED', 'ACTIVE', 'RETRY', 'COMPLETE OK', 'COMPLETE WITH ERRORS', 'HARD ERROR'];
+    for (var c = 0; c < labels.length; c++) {
+      RSC_UI_PAINT_STATUS_COLUMN_20260820_(sh, J.counterRow, 1 + c * 2, [labels[c]], 2);
+    }
+    RSC_UI_PAINT_STATUS_COLUMN_20260820_(sh, J.summaryRow, 1,
+      [stats.unfinished ? 'IN PROGRESS' : 'ALL OK'], 2);
   } catch (e) { /* best-effort */ }
 }

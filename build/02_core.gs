@@ -372,3 +372,54 @@ function rscLeaseRelease_(resource, token) {
     }, 3000);
   } catch (e) { /* lease kedaluwarsa sendiri */ }
 }
+
+/* -------------------------------------------------------------
+ * PEWARNAAN STATUS TERPUSAT
+ * Semua permukaan (O:P, manifest, dashboard, rekap) memakai peta yang sama
+ * supaya arti warna tidak pernah berbeda antar sheet.
+ * ----------------------------------------------------------- */
+
+function RSC_UI_STATUS_COLOR_20260820_(status) {
+  var NONE = RSC_UI_STATUS_COLORS_20260820.NONE;
+  var key = rscKey_(status);
+  if (!key) return NONE;
+  var name = RSC_UI_STATUS_MAP_20260820[key];
+  if (!name) {
+    for (var i = 0; i < RSC_UI_STATUS_KEYWORDS_20260820.length; i++) {
+      if (key.indexOf(RSC_UI_STATUS_KEYWORDS_20260820[i][0]) >= 0) {
+        name = RSC_UI_STATUS_KEYWORDS_20260820[i][1];
+        break;
+      }
+    }
+  }
+  return RSC_UI_STATUS_COLORS_20260820[name || 'NONE'] || NONE;
+}
+
+/**
+ * Warnai satu kolom status. `statuses` adalah array teks per baris.
+ * Best-effort: kegagalan pewarnaan tidak pernah menggagalkan pipeline.
+ */
+function RSC_UI_PAINT_STATUS_COLUMN_20260820_(sheet, firstRow, col, statuses, width) {
+  if (!sheet || !statuses || !statuses.length) return 0;
+  width = width || 1;
+  try {
+    var bg = [], fc = [], fw = [];
+    for (var i = 0; i < statuses.length; i++) {
+      var p = RSC_UI_STATUS_COLOR_20260820_(statuses[i]);
+      var rb = [], rf = [], rw = [];
+      for (var c = 0; c < width; c++) {
+        rb.push(p.bg);
+        rf.push(p.font);
+        rw.push(c === 0 && p.bold ? 'bold' : 'normal');
+      }
+      bg.push(rb); fc.push(rf); fw.push(rw);
+    }
+    var rng = sheet.getRange(firstRow, col, statuses.length, width);
+    rng.setBackgrounds(bg);
+    if (rng.setFontColors) rng.setFontColors(fc);
+    if (rng.setFontWeights) rng.setFontWeights(fw);
+    return statuses.length;
+  } catch (e) {
+    return 0;
+  }
+}

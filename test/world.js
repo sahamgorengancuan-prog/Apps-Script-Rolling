@@ -86,6 +86,8 @@ function buildWorld(opts) {
   const db = new FakeSpreadsheet(opts.dbId || 'DB_MASTER_ID', 'MDM Master Database', { isDb: true });
   const bpRows = [['Customer ID', 'Sales Office', 'Sales Organization', 'Name']];
   Array.from(custIds).forEach(c => bpRows.push([c, offByCust.get(c) || '', 'STA1', 'Cust ' + c]));
+  // m_bp_general_view berisi SEMUA business partner: customer maupun salesman.
+  Array.from(salesIds).forEach(sid => bpRows.push([sid, '', 'STA1', 'Salesman ' + sid]));
   // padding untuk membuktikan lookup tetap O(1) pada master besar
   for (let i = 0; i < (opts.dbPadding === undefined ? 3000 : opts.dbPadding); i++) {
     bpRows.push(['9' + String(100000000 + i), '2AA0', 'STA1', 'Filler ' + i]);
@@ -105,10 +107,14 @@ function buildWorld(opts) {
   (opts.relationRows || []).forEach(r => relRows.push([JSON.stringify(r)]));
   db.addSheet('m_bp_relation', relRows);
 
-  const vsRows = [['cust_id', 'salesman_id', 'visit_schedule', 'visit_category', 'visit_valid_to']];
-  rollingData.forEach(r => {
-    if (String(r[13]).trim() === 'Toko Bangkrut') vsRows.push([r[2], r[4], r[10], r[8], '9999-12-31']);
+  const vsRows = [['cust_id', 'salesman_id', 'visit_schedule', 'visit_category', 'visit_type',
+    'visit_valid_from', 'visit_valid_to']];
+  [].concat(rollingData, cleanData).forEach(r => {
+    if (String(r[13]).trim() === 'Toko Bangkrut') {
+      vsRows.push([r[2], r[4], r[10], r[8], r[9], opts.mvsValidFrom || '2024-01-01', '9999-12-31']);
+    }
   });
+  (opts.visitRows || []).forEach(r => vsRows.push(r));
   db.addSheet('m_visit_schedule', vsRows);
 
   env.addFile(db);

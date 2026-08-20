@@ -77,7 +77,15 @@ var RSC_DB_PARAMETERS = {
     RELATION:  ['m_bp_relation'],
     SALESMAN:  ['m_sales_info'],
     BP:        ['m_bp_general_view', 'm_bp_general', '_rsc_bp_general_lookup'],
-    VISIT:     ['m_visit_schedule']
+    VISIT:     ['m_visit_schedule'],
+    RELTYPE:   ['m_rel_salesman_type_rlt']
+  },
+
+  // Master Relationship (opsional). Bila tabel tidak ada, daftar canonical
+  // ZWS001..ZWS022 + BUR001 di RELATIONSHIP_OPTIONS yang dipakai.
+  relTypeHeaders: {
+    id: ['rlt_id', 'relationship_cat_id', 'rel_id'],
+    desc: ['rlt_desc', 'description', 'desc']
   },
 
   // Header m_bp_relation mode LEGACY (5 kolom).
@@ -256,12 +264,188 @@ var TEMPLATE_UI_PARAMETERS = {
   }
 };
 
+/* -------------------------------------------------------------
+ * KODE WARNA STATUS (dipakai O:P, manifest, dashboard, rekap)
+ * -------------------------------------------------------------
+ *   OK / ALL OK / COMPLETE OK / DONE   -> HIJAU
+ *   ERROR / HARD ERROR / GAGAL         -> MERAH
+ *   IN PROGRESS / WORKER / ACTIVE      -> KUNING
+ *   QUEUE / QUEUED / ANTREAN           -> ORANGE
+ *   RETRY / DEFERRED / TERTUNDA        -> KUNING TUA
+ *   BLOCKED / INFRA                    -> BIRU
+ *   SKIPPED / STOPPED / DILEWATI       -> ABU
+ * ----------------------------------------------------------- */
+var RSC_UI_STATUS_COLORS_20260820 = {
+  GREEN:  { bg: '#B7E1CD', font: '#0B5D2E', bold: true },
+  RED:    { bg: '#F4C7C3', font: '#8B1A10', bold: true },
+  YELLOW: { bg: '#FFF2A8', font: '#7A5B00', bold: true },
+  ORANGE: { bg: '#FCD9A6', font: '#8A4B08', bold: true },
+  AMBER:  { bg: '#FFE0B2', font: '#8A4B08', bold: false },
+  BLUE:   { bg: '#D6E4F7', font: '#1E3A8A', bold: false },
+  GREY:   { bg: '#E5E7EB', font: '#4B5563', bold: false },
+  NONE:   { bg: null, font: null, bold: false }
+};
+
+/**
+ * Peta status -> warna. Kunci dicocokkan setelah rscKey_() sehingga
+ * "COMPLETE OK", "COMPLETE_OK", dan "complete-ok" bernilai sama.
+ */
+var RSC_UI_STATUS_MAP_20260820 = {
+  OK: 'GREEN', ALLOK: 'GREEN', COMPLETEOK: 'GREEN', DONE: 'GREEN', SELESAI: 'GREEN',
+  VALIDASIOK: 'GREEN', SUKSES: 'GREEN', PASS: 'GREEN', LULUS: 'GREEN', GREEN: 'GREEN',
+
+  ERROR: 'RED', HARDERROR: 'RED', COMPLETEWITHERRORS: 'RED', GAGAL: 'RED', FAILED: 'RED',
+  PERLUREVISI: 'RED', FATAL: 'RED', RED: 'RED',
+
+  ACTIVE: 'YELLOW', RUNNING: 'YELLOW', INPROGRESS: 'YELLOW', WORKER: 'YELLOW',
+  WORKING: 'YELLOW', VALIDATING: 'YELLOW', PROSES: 'YELLOW', BERJALAN: 'YELLOW',
+  CLAIMED: 'YELLOW', PREWARM: 'YELLOW', YELLOW: 'YELLOW',
+
+  QUEUED: 'ORANGE', QUEUE: 'ORANGE', ANTREAN: 'ORANGE', PENDING: 'ORANGE',
+  WAITING: 'ORANGE', MENUNGGU: 'ORANGE', ORANGE: 'ORANGE',
+
+  RETRY: 'AMBER', DEFERRED: 'AMBER', TERTUNDA: 'AMBER', DEFER: 'AMBER',
+
+  BLOCKEDINFRA: 'BLUE', BLOCKED: 'BLUE', INFRA: 'BLUE', PAUSED: 'BLUE',
+
+  SKIPPED: 'GREY', SKIPPEDINVALID: 'GREY', DILEWATI: 'GREY', STOPPED: 'GREY',
+  STOP: 'GREY', IDLE: 'GREY', HARDSTOP: 'GREY', CANCELLED: 'GREY'
+};
+
+/** Kata kunci yang dicari bila status berupa kalimat panjang (kolom Feedback). */
+var RSC_UI_STATUS_KEYWORDS_20260820 = [
+  ['VALIDASIOK', 'GREEN'], ['ALLOK', 'GREEN'], ['COMPLETEOK', 'GREEN'],
+  ['PERLUREVISI', 'RED'], ['HARDERROR', 'RED'], ['GAGAL', 'RED'], ['ERROR', 'RED'],
+  ['TERTUNDA', 'AMBER'], ['DEFER', 'AMBER'], ['RETRY', 'AMBER'],
+  ['DILEWATI', 'GREY'], ['SKIPPED', 'GREY'], ['STOPPED', 'GREY'],
+  ['BLOCKED', 'BLUE'],
+  ['INPROGRESS', 'YELLOW'], ['ACTIVE', 'YELLOW'], ['RUNNING', 'YELLOW'], ['VALIDATING', 'YELLOW'],
+  ['QUEUED', 'ORANGE'], ['ANTREAN', 'ORANGE'],
+  ['OK', 'GREEN']
+];
+
 var VISIT_CATEGORY_OPTIONS = ['F1', 'F2', 'F4', 'F8'];
 var VISIT_CATEGORY_FREQUENCY = { F1: 1, F2: 2, F4: 4, F8: 8 };
 var VISIT_TYPE_OPTIONS = ['01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
 var VISIT_DAYS = ['M', 'T', 'W', 'TH', 'F', 'S', 'SU'];
 var REASON_OPTIONS = ['Rolling', 'Toko Bangkrut'];
 var OPEN_ENDED_DATE_TEXT = '9999-12-31';
+
+/* LOV Sales Type (New code S4) — dipakai sheet Change Salesman Type. */
+var SALES_TYPE_OPTIONS = [
+  '11 - CORPORATE FOOD',
+  '12 - CORPORATE NON FOOD',
+  '13 - CORPORATE ALL',
+  '14 - CORPORATE RETAIL',
+  '15 - CORPORATE RUMAH MAKAN',
+  '16 - RETAIL S',
+  '17 - KEY ACCOUNT FOOD',
+  '18 - KEY ACCOUNT NON FOOD',
+  '19 - KEY ACCOUNT',
+  '20 - KEY ACCOUNT FOOD TOP',
+  '21 - KEY ACCOUNT NON FOOD TOP',
+  '22 - KEY ACCOUNT TOP',
+  '23 - SALESMAN KOSMETIK',
+  '24 - HOREKA BR',
+  '25 - HOREKA NON BR',
+  '26 - HOREKA MIX',
+  '27 - SALESMAN HOREKA',
+  '28 - MOTORIS FOOD',
+  '29 - MOTORIS NON FOOD',
+  '30 - MOTORIS MIX',
+  '31 - MOTORIS GROSIR',
+  '32 - MOTORIS GROSIR WARUNG SEDUH MIE',
+  '33 - MOTORIS GROSIR WARUNG SEDUH KOPI',
+  '34 - MOTORIS WARUNG SEDUH KOPI',
+  '35 - MOTORIS WARUNG SEDUH MIE',
+  '36 - CANVAS MOBIL GROSIR',
+  '37 - CANVAS MOBIL FOOD',
+  '38 - CANVAS MOBIL NON FOOD',
+  '39 - CANVAS MOBIL MIX',
+  '40 - SALESMAN FROZEN F2',
+  '41 - SALESMAN FROZEN F4',
+  '42 - SALESMAN FROZEN F4 HYPER / SUPER',
+  '43 - SALESMAN FROZEN F4 SHARING SHOWCASE',
+  '44 - SALESMAN MTI',
+  '45 - SALESMAN MTKA (AO)',
+  '46 - SALESMAN MT MIX',
+  '47 - INSTITUSI SALESMAN',
+  '48 - SALESMAN EXPORT',
+  '49 - SALESMAN RETAIL ONLINE',
+  '50 - SALESMAN CERAMIC ROOF',
+  '51 - SALESMAN GYPSUM',
+  '52 - SALESMAN FIBER CEMENT',
+  '53 - SALESMAN MIX BUILDING MATERIAL',
+  '54 - MD DISPLAY',
+  '55 - MD FROZEN',
+  '56 - MD BRANDING',
+  '57 - MDMM',
+  '58 - TEAM SAMPLING',
+  '59 - COMBER',
+  '60 - ACCOUNT DEVELOPMENT OFFICER',
+  '61 - RO',
+  '62 - SPG (WS)',
+  '63 - COLLECTOR IRE',
+  '64 - COLLECTOR',
+  '65 - MNI MARKET TOP',
+  '66 - MOTORIST R3',
+  '67 - CORPORATE RETAIL EXPAND',
+  'A1 - KAE MTKA',
+  'A2 - KAE E-COMM',
+  'A3 - KAO MTKA',
+  'A4 - RAS MTI',
+  'A5 - RAS MIX',
+  'A6 - RAS MTKA',
+  'A7 - KAM MTKA',
+  'A8 - KAM FROZEN',
+  'A9 - KAM ECOMM',
+  'B1 - SPV MIX',
+  'B2 - SPV RETAIL',
+  'B3 - SPV NON FOOD',
+  'B4 - SPV FOOD',
+  'B5 - SPV RETAIL SMALL',
+  'B6 - SPV MOTORIS',
+  'B7 - SPV KOSMETIK',
+  'B8 - AS HOREKA',
+  'B9 - AE HOREKA',
+  'C1 - SPV HOREKA ALL',
+  'C2 - SPV FROZEN',
+  'C3 - SPV CERAMIC ROOF',
+  'C4 - SPV GYPSUM',
+  'C5 - SPV FIBER CEMENT',
+  'C6 - SPV MIX BUILDING MATERIAL',
+  'C7 - INSTITUSI AS',
+  'C8 - INSTITUSI AE',
+  'C9 - KSR/TL',
+  'D1 - KOORDINATOR COMBER',
+  'D2 - KPL',
+  'D3 - KMD',
+  'D4 - SPV RO',
+  'N1 - ASM FOOD',
+  'N2 - ASM NON FOOD',
+  'N3 - ASM MIX',
+  'N4 - ASM RETAIL SMALL',
+  'N5 - ASM MOTORIS',
+  'N6 - ASM KOSMETIK',
+  'N7 - AM HOREKA',
+  'N8 - ASM FROZEN',
+  'N9 - RKAM MTI',
+  'O1 - SENIOR KAM',
+  'O2 - RSM',
+  'O3 - ARSM',
+  'O4 - RSM FROZEN',
+  'O5 - GKAM',
+  'O6 - SM FOOD',
+  'O7 - SM NON FOOD',
+  'O8 - SM MIX',
+  'O9 - ASM (WS)',
+  'P1 - SM KOSMETIK',
+  'P2 - ASM KOSMETIK (WS)',
+  'P3 - SM FROZEN',
+  'P4 - ASM FROZEN (WS)',
+  'P5 - RKAM MTKA',
+  'P6 - GKAM MTKA'
+];
 
 var RELATIONSHIP_OPTIONS = [
   'ZWS003 - Sales Rep. Food',

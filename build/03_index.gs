@@ -71,6 +71,11 @@ function rscIndexStore_(createIfMissing) {
 
 function rscIdxSheetName_(tableName) { return 'IDX_' + tableName; }
 
+// Prefix key agregat bantu pada sheet index. Key asli selalu numerik / kode,
+// jadi prefix ini dijamin tidak pernah bentrok.
+var RSC_IDX_AUX_EARLIEST = '~E|';
+var RSC_IDX_AUX_CLOSED = '~C|';
+
 function rscIdxSheetWrite_(tableName, ver, built) {
   var ss = rscIndexStore_(true);
   if (!ss) return { ok: false, reason: 'NO_STORE' };
@@ -83,18 +88,32 @@ function rscIdxSheetWrite_(tableName, ver, built) {
 
   var keys = Object.keys(built.map);
   sh.getRange(1, 1, 1, 2).setValues([[ver, JSON.stringify({
-    rows: built.rows, sheet: built.sheet, source: built.source, mode: built.mode, keys: keys.length
+    rows: built.rows, sheet: built.sheet, source: built.source, mode: built.mode, keys: keys.length,
+    fieldPresent: built.fieldPresent || null, fields: built.fields || null
   })]]);
 
+  // Agregat bantu (histori Toko Bangkrut) ikut dimaterialisasi dengan prefix
+  // yang tidak mungkin bentrok dengan key asli (key asli selalu numerik).
+  var pairs = [];
+  for (var kk = 0; kk < keys.length; kk++) pairs.push([keys[kk], JSON.stringify(built.map[keys[kk]])]);
+  if (built.earliest) {
+    var ek = Object.keys(built.earliest);
+    for (var e = 0; e < ek.length; e++) pairs.push([RSC_IDX_AUX_EARLIEST + ek[e], built.earliest[ek[e]]]);
+  }
+  if (built.closed) {
+    var ck = Object.keys(built.closed);
+    for (var c = 0; c < ck.length; c++) pairs.push([RSC_IDX_AUX_CLOSED + ck[c], built.closed[ck[c]]]);
+  }
+
   var row = 2, i = 0, block = RSC_DB_PARAMETERS.indexSheetWriteRows;
-  while (i < keys.length) {
-    var n = Math.min(block, keys.length - i);
+  while (i < pairs.length) {
+    var n = Math.min(block, pairs.length - i);
     var out = [];
-    for (var k = 0; k < n; k++) out.push([keys[i + k], JSON.stringify(built.map[keys[i + k]])]);
+    for (var k = 0; k < n; k++) out.push(pairs[i + k]);
     sh.getRange(row, 1, n, 2).setValues(out);
     row += n; i += n;
   }
-  return { ok: true, keys: keys.length };
+  return { ok: true, keys: keys.length, rows: pairs.length };
 }
 
 function rscIdxSheetRead_(tableName, ver) {
@@ -108,19 +127,38 @@ function rscIdxSheetRead_(tableName, ver) {
   try { meta = JSON.parse(head[1] || '{}'); } catch (e) { meta = {}; }
 
   var last = sh.getLastRow(), map = {}, row = 2;
+  var closed = {}, closedKeys = {}, earliest = {};
   var win = RSC_DB_PARAMETERS.indexSheetReadRows;
   while (row <= last) {
     var n = Math.min(win, last - row + 1);
     var vals = sh.getRange(row, 1, n, 2).getDisplayValues();
     for (var r = 0; r < vals.length; r++) {
-      if (!vals[r][0]) continue;
-      try { map[vals[r][0]] = JSON.parse(vals[r][1]); } catch (e2) { /* baris rusak dilewati */ }
+      var key = vals[r][0];
+      if (!key) continue;
+      if (key.indexOf(RSC_IDX_AUX_EARLIEST) === 0) {
+        earliest[key.substring(RSC_IDX_AUX_EARLIEST.length)] = rscText_(vals[r][1]);
+        continue;
+      }
+      if (key.indexOf(RSC_IDX_AUX_CLOSED) === 0) {
+        var triple = key.substring(RSC_IDX_AUX_CLOSED.length);
+        closed[triple] = rscText_(vals[r][1]);
+        var cut = triple.indexOf('|');
+        if (cut > 0) {
+          var cust = triple.substring(0, cut), suffix = triple.substring(cut + 1);
+          if (!closedKeys[cust]) closedKeys[cust] = [];
+          closedKeys[cust].push(suffix);
+        }
+        continue;
+      }
+      try { map[key] = JSON.parse(vals[r][1]); } catch (e2) { /* baris rusak dilewati */ }
     }
     row += n;
   }
   return {
     available: true, map: map, rows: meta.rows || 0, sheet: meta.sheet || '',
-    source: meta.source || '', mode: meta.mode || '', storedIn: 'sheet'
+    source: meta.source || '', mode: meta.mode || '', storedIn: 'sheet',
+    fields: meta.fields || null, fieldPresent: meta.fieldPresent || null,
+    closed: closed, closedKeys: closedKeys, earliest: earliest
   };
 }
 
@@ -338,6 +376,8 @@ function rscBuildRelationIndex_() {
   var lastRow = sh.getLastRow(), lastCol = Math.max(1, sh.getLastColumn());
   var cutoff = rscActiveCutoff_();
   var map = {}, total = 0, skipped = 0, expired = 0;
+  var closed = {}, closedKeys = {}, earliest = {};
+  var openEnded = OPEN_ENDED_DATE_TEXT;
   var row = layout.firstDataRow, win = RSC_DB_PARAMETERS.readWindowRows;
 
   while (row <= lastRow) {
@@ -346,6 +386,24 @@ function rscBuildRelationIndex_() {
     for (var r = 0; r < block.length; r++) {
       var rec = RSC_MBP_RELATION_PARSE_ROW_20260819_(layout, block[r]);
       if (!rec || !rec.customer || !/^\d{6,12}$/.test(rec.customer)) { skipped++; continue; }
+
+      // Agregat ringan yang tetap disimpan walau barisnya sudah kedaluwarsa.
+      // Toko Bangkrut membutuhkan histori ini untuk menentukan Valid From.
+      if (rec.validFrom) {
+        if (!earliest[rec.customer] || rec.validFrom < earliest[rec.customer]) {
+          earliest[rec.customer] = rec.validFrom;
+        }
+        if (rec.relationship && rec.salesman && rec.validTo !== openEnded) {
+          var tkey = rec.customer + '|' + rec.relationship + '|' + rec.salesman;
+          if (!closed[tkey] || rec.validFrom > closed[tkey]) {
+            closed[tkey] = rec.validFrom;
+            if (!closedKeys[rec.customer]) closedKeys[rec.customer] = [];
+            var suffix = rec.relationship + '|' + rec.salesman;
+            if (closedKeys[rec.customer].indexOf(suffix) < 0) closedKeys[rec.customer].push(suffix);
+          }
+        }
+      }
+
       if (rec.validTo && rec.validTo < cutoff) { expired++; continue; }
       if (!map[rec.customer]) map[rec.customer] = [];
       if (map[rec.customer].length < 24) {
@@ -357,6 +415,7 @@ function rscBuildRelationIndex_() {
   }
   return {
     available: true, map: map, rows: total, skippedRows: skipped, expiredRows: expired,
+    closed: closed, closedKeys: closedKeys, earliest: earliest,
     sheet: sh.getName(), source: loc.ssName, sourceId: loc.ssId, mode: layout.mode,
     fields: ['Relationship', 'Salesman ID', 'Valid From', 'Valid To']
   };
@@ -379,10 +438,12 @@ function rscBuildHeaderIndex_(aliases, keySpecs, valSpecs, opts) {
     if (ci < 0) return { available: false, reason: 'KEY_COLUMN_MISSING', map: {}, rows: 0, sheet: sh.getName() };
     keyIdx.push(ci);
   }
-  var valIdx = [], fields = [];
+  var valIdx = [], fields = [], fieldPresent = {};
   for (var v = 0; v < valSpecs.length; v++) {
-    valIdx.push(rscPickCol_(hmap, valSpecs[v].aliases));
+    var ci2 = rscPickCol_(hmap, valSpecs[v].aliases);
+    valIdx.push(ci2);
     fields.push(valSpecs[v].name);
+    fieldPresent[valSpecs[v].name] = ci2 >= 0;
   }
   var activeAt = -1;
   if (opts.activeField) {
@@ -422,6 +483,7 @@ function rscBuildHeaderIndex_(aliases, keySpecs, valSpecs, opts) {
   }
   return {
     available: true, map: map, rows: total, expiredRows: expired, fields: fields,
+    fieldPresent: fieldPresent,
     sheet: sh.getName(), source: loc.ssName, sourceId: loc.ssId, mode: 'header'
   };
 }
@@ -460,6 +522,13 @@ function rscBuildIndex_(tableName) {
       { name: 'Valid From', aliases: D.visitHeaders.validFrom },
       { name: 'Valid To', aliases: D.visitHeaders.validTo }
     ], { maxPerKey: 8 });
+  }
+
+  if (tableName === 'RELTYPE') {
+    if (!D.tables.RELTYPE) return { available: false, reason: 'TABLE_NOT_CONFIGURED', map: {}, rows: 0 };
+    return rscBuildHeaderIndex_(D.tables.RELTYPE, [D.relTypeHeaders.id], [
+      { name: 'Description', aliases: D.relTypeHeaders.desc }
+    ], { maxPerKey: 1 });
   }
 
   throw new RscDataError('Tabel master tidak dikenal: ' + tableName);

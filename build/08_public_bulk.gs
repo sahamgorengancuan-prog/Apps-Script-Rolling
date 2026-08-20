@@ -41,14 +41,22 @@ function RSC_STANDARD_VALIDATE_ACTIVE_SHEET_20260814() {
   for (var k in res.byCode) {
     if (Object.prototype.hasOwnProperty.call(res.byCode, k)) codes.push(k + '=' + res.byCode[k]);
   }
+  // PERF26 §16: Auto Revamp hanya jalan untuk sheet Rolling yang nol error.
+  var auto = RSC_PERF12_AUTO_REVAMP_ACTIVE_AFTER_VALIDATION_20260819_(ss, spec, res);
+
   var notes = (masters.notes || []).join('\n');
   rscAlert_('Validasi selesai — ' + spec.label,
     'Baris     : ' + res.rowCount + '\n' +
     'Error     : ' + res.errorRows + '\n' +
     'Sched only: ' + res.changeScheduleOnlyRows + '\n' +
+    'Dibetulkan: ' + res.mutatedRows + ' baris (auto-replace master/tanggal)\n' +
     (codes.length ? ('Rincian   : ' + codes.join(', ') + '\n') : '') +
+    (auto.ran ? 'Auto Revamp: dijalankan karena 0 error.\n' : '') +
     (notes ? ('\nCatatan master:\n' + notes) : ''));
-  return { rows: res.rowCount, errorRows: res.errorRows, byCode: res.byCode, notes: masters.notes };
+  return {
+    rows: res.rowCount, errorRows: res.errorRows, mutatedRows: res.mutatedRows,
+    byCode: res.byCode, notes: masters.notes, autoRevamp: auto
+  };
 }
 
 /** Menu 2 — Start / Resume Bulk Validation seluruh link kolom E. */

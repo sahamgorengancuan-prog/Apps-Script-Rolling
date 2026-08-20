@@ -414,5 +414,8 @@ function rscWriteBackRekapStatus_(ss, runId) {
     col[k] = [v === undefined ? col[k][0] : v];
   }
   master.getRange(L.firstDataRow, L.feedbackCol, n, 1).setValues(col);
+  var paint = [];
+  for (var c2 = 0; c2 < n; c2++) paint.push(col[c2][0]);
+  RSC_UI_PAINT_STATUS_COLUMN_20260820_(master, L.firstDataRow, L.feedbackCol, paint, 1);
   return updates;
 }

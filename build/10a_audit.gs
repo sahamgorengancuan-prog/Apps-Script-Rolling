@@ -208,6 +208,30 @@ function RSC_PERF11_DIAGNOSE_DB_ACCESS_20260819() {
     }
   }
   if (!ids.length) lines.push('RSC_DB_PARAMETERS.spreadsheetId masih kosong.');
+
+  // Resolusi tiap tabel master: tab mana yang terpakai dan berapa key terbaca.
+  var tables = ['BP', 'RELATION', 'SALESMAN', 'VISIT', 'RELTYPE'];
+  var res = ['RESOLUSI TABEL MASTER'];
+  for (var t = 0; t < tables.length; t++) {
+    var alias = (RSC_DB_PARAMETERS.tables[tables[t]] || []).join(' / ');
+    try {
+      var idx = rscGetIndex_(tables[t]);
+      if (idx && idx.available) {
+        res.push('OK  ' + tables[t] + ' -> tab "' + (idx.sheet || '?') + '"' +
+          (idx.source ? (' di ' + idx.source) : '') +
+          '\n    key=' + Object.keys(idx.map || {}).length + ', baris=' + (idx.rows || 0) +
+          (idx.mode ? (', mode=' + idx.mode) : ''));
+      } else {
+        res.push('--  ' + tables[t] + ' TIDAK DITEMUKAN (' + ((idx && idx.reason) || '-') + ')' +
+          '\n    alias dicari: ' + alias +
+          '\n    rule terkait akan DILEWATI, bukan dijadikan error.');
+      }
+    } catch (eT) {
+      res.push('ERR ' + tables[t] + ': ' + rscClassify_(eT).message);
+    }
+  }
+  lines.push(res.join('\n'));
+
   var text = lines.join('\n\n');
   rscAlert_('Diagnose DB Access / Identity', text);
   return text;

@@ -62,6 +62,9 @@ function rscManifestWriteRows_(sh, rows) {
     var block = [];
     for (var k = start; k <= i; k++) block.push(rows[k].values);
     sh.getRange(rows[start].row, 1, block.length, V.manifestHeaders.length).setValues(block);
+    var statuses = [];
+    for (var z = 0; z < block.length; z++) statuses.push(block[z][RSC_M.STATUS]);
+    RSC_UI_PAINT_STATUS_COLUMN_20260820_(sh, rows[start].row, RSC_M.STATUS + 1, statuses, 1);
     i++;
   }
 }
@@ -208,7 +211,12 @@ function rscBuildManifest_(ss, runId) {
   if (sh.getLastRow() > 1) {
     sh.getRange(2, 1, sh.getLastRow() - 1, V.manifestHeaders.length).clearContent();
   }
-  if (out.length) sh.getRange(2, 1, out.length, V.manifestHeaders.length).setValues(out);
+  if (out.length) {
+    sh.getRange(2, 1, out.length, V.manifestHeaders.length).setValues(out);
+    var statuses = [];
+    for (var sIdx = 0; sIdx < out.length; sIdx++) statuses.push(out[sIdx][RSC_M.STATUS]);
+    RSC_UI_PAINT_STATUS_COLUMN_20260820_(sh, 2, RSC_M.STATUS + 1, statuses, 1);
+  }
   stats.total = out.length;
   return stats;
 }
@@ -269,6 +277,7 @@ function rscUpdateTask_(ss, task, mutate) {
     mutate(v);
     v[RSC_M.UPDATED_AT] = rscStamp_();
     sh.getRange(task.row, 1, 1, V.manifestHeaders.length).setValues([v]);
+    RSC_UI_PAINT_STATUS_COLUMN_20260820_(sh, task.row, RSC_M.STATUS + 1, [v[RSC_M.STATUS]], 1);
     return { applied: true };
   }, V.commitLockWaitMs);
 }

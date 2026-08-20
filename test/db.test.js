@@ -27,7 +27,8 @@ const REL_PAYLOAD = [
   ['110027974', 'ZWS015', 'S091040962', '2026-05-01', '2026-06-30'],
   ['110111548', 'ZWS013', 'S091050150', '2026-03-01', '2026-05-31'],
   ['110111548', 'ZWS004', 'S091050182', '2026-06-01', '9999-12-31'],
-  ['110094788', 'ZWS003', 'S099999999', '2026-03-01', '9999-12-31']
+  ['110094788', 'ZWS003', 'S099999999', '2026-03-01', '9999-12-31'],
+  ['110221303', 'ZWS015', 'S091120232', '2026-03-01', '2026-08-31']
 ];
 
 /** Header dan baris m_sales_info persis seperti ekspor CSV aslinya. */
@@ -52,7 +53,14 @@ function withRealDb(relInSeparateFile) {
   mainDb.addSheet('m_bp_general_view', [
     ['bp_id', 'sls_office', 'bp_type_id', 'bp_name'],
     ['110094788', '2BA0', 'ZD01', 'Toko Uji'],
-    ['110625404', '2AA0', 'ZD01', 'Toko Lain']
+    ['110625404', '2AA0', 'ZD01', 'Toko Lain'],
+    ['110223729', '2BA0', 'ZD01', 'Toko CSO'],
+    // m_bp_general_view memuat seluruh business partner, termasuk salesman.
+    ['S091010486', '2BA0', 'ZD01', 'Salesman Uji'],
+    ['S092250070', '2CF0', 'ZD01', 'Pidi Pirmansyah'],
+    ['S091999999', '2BA0', 'ZD01', 'Salesman Tanpa Sales Info'],
+    ['S091210238', '2BA0', 'ZD01', 'Salesman CSO'],
+    ['S0000M2AA0', '2AA0', 'ZD01', 'Dummy Motoris']
   ]);
   mainDb.addSheet('catatan', [['ini tab bebas', 'bukan master']]);
 
@@ -166,31 +174,54 @@ section('D5. RULE MEMAKAI DB NYATA');
     return base;
   }
 
-  // 110094788/ZWS003 di master masih dipegang S099999999 sampai 9999-12-31.
-  const r1 = sandbox.rscValidateValues_(spec, [row({ 3: 'ZWS003', 4: 'S092250070' })], masters);
-  ok('R8b mendeteksi relasi aktif milik salesman lain',
-     r1.detail[0].indexOf('[R8]') >= 0 && /S099999999/.test(r1.detail[0]), r1.detail[0]);
+  // R8b: key Customer+Relationship+Salesman+Valid To yang sudah ada di DB.
+  // Baris Toko Bangkrut tidak pernah diperlakukan sebagai Change Schedule Only,
+  // jadi hanya di situ R8b dapat menyala (baris non-TB dengan key sama justru
+  // adalah definisi Change Schedule Only CASE 1).
+  const r1 = sandbox.rscValidateValues_(spec, [row({
+    2: '110221303', 3: 'ZWS015', 4: 'S091120232', 7: '2026-08-31', 12: '2026-08-31',
+    11: '2026-01-01', 6: '2026-01-01', 13: 'Toko Bangkrut'
+  })], masters);
+  ok('R8b menyala saat key sudah ada di m_bp_relation',
+     /\[R8\][^|]*R8b/.test(r1.detail[0]), r1.detail[0]);
+
+  const r1b = sandbox.rscValidateValues_(spec, [row({ 2: '110223729', 3: 'ZWS006', 4: 'S091210238' })], masters);
+  ok('key sama tanpa Toko Bangkrut = Change Schedule Only, bukan R8b',
+     r1b.detail[0].indexOf('R8b') < 0 && r1b.ctx.rows[0].cso.mode === 'EXACT_REL_VALID_TO', r1b.detail[0]);
 
   const r2 = sandbox.rscValidateValues_(spec, [row({ 4: 'S091999999' })], masters);
-  ok('R9 mendeteksi salesman di luar m_sales_info',
-     /\[R9\][^|]*tidak ditemukan/.test(r2.detail[0]), r2.detail[0]);
+  ok('R1A mendeteksi salesman normal di luar m_sales_info',
+     /\[R1A\][^|]*m_sales_info/.test(r2.detail[0]), r2.detail[0]);
 
   const r3 = sandbox.rscValidateValues_(spec, [row({ 2: '110000000' })], masters);
-  ok('R10 mendeteksi customer di luar m_bp_general_view',
-     /\[R10\][^|]*tidak ditemukan/.test(r3.detail[0]), r3.detail[0]);
+  ok('R1 mendeteksi customer di luar m_bp_general_view',
+     /\[R1\][^|]*Customer ID tidak ditemukan/.test(r3.detail[0]), r3.detail[0]);
 
-  const r4 = sandbox.rscValidateValues_(spec, [row({ 2: '110625404' })], masters);
-  ok('R10 mendeteksi Sales Office tidak cocok', /\[R10\][^|]*2AA0/.test(r4.detail[0]), r4.detail[0]);
+  const r4 = sandbox.rscValidateValues_(spec, [row({ 4: 'S0000M2AA0' })], masters);
+  ok('Dummy Salesman dikecualikan dari m_sales_info',
+     r4.detail[0].indexOf('[R1A]') < 0, r4.detail[0]);
 
   const r5 = sandbox.rscValidateValues_(spec, [row({ 2: '110625404', 0: '2AA0', 1: '2AA0' })], masters);
-  ok('kombinasi valid lolos R9 & R10',
-     r5.detail[0].indexOf('[R9]') < 0 && r5.detail[0].indexOf('[R10]') < 0, r5.detail[0]);
+  ok('kombinasi valid lolos R1 & R1A',
+     r5.detail[0].indexOf('[R1]') < 0 && r5.detail[0].indexOf('[R1A]') < 0, r5.detail[0]);
 
-  // Kebijakan tanggal periode.
+  // Kebijakan tanggal periode: Rolling di-auto-replace, bukan dijadikan ERROR.
   const r6 = sandbox.rscValidateValues_(spec, [row({ 6: '2026-08-01' })], masters);
-  ok('R4 menolak Valid From di luar dateNew', /\[R4\][^|]*2026-09-01/.test(r6.detail[0]), r6.detail[0]);
+  eq('Rolling Valid From di-auto-replace ke dateNew', r6.ctx.rows[0].f['Valid From'], '2026-09-01');
+  eq('mutasi tercatat', r6.mutatedRows, 1);
+  ok('bukan ERROR karena sudah dibetulkan', r6.detail[0].indexOf('[R4]') < 0, r6.detail[0]);
+
   const r7 = sandbox.rscValidateValues_(spec, [row({ 13: 'Toko Bangkrut', 7: '9999-12-31' })], masters);
-  ok('TB menolak Valid To open-ended', r7.detail[0].indexOf('[TB]') >= 0, r7.detail[0]);
+  ok('TB menolak Valid To open-ended', /\[TB\][^|]*Valid To harus 2026-08-31/.test(r7.detail[0]), r7.detail[0]);
+
+  const r7b = sandbox.rscValidateValues_(spec, [row({ 13: 'Toko Bangkrut', 7: '', 12: '' })], masters);
+  eq('Valid To Toko Bangkrut diisi otomatis saat kosong', r7b.ctx.rows[0].f['Valid To'], '2026-08-31');
+  eq('Visit Valid To Toko Bangkrut diisi otomatis saat kosong',
+     r7b.ctx.rows[0].f['Visit Valid To'], '2026-08-31');
+
+  const r8 = sandbox.rscValidateValues_(spec, [row({ 7: '2026-12-31' })], masters);
+  ok('R9A menuntut open-ended untuk Rolling normal',
+     /\[R9A\][^|]*9999-12-31/.test(r8.detail[0]), r8.detail[0]);
 }
 
 /* ===================================================================== */
@@ -248,7 +279,11 @@ section('D8. INDEX BESAR DIMATERIALISASI KE SHEET');
   ok('spreadsheet penampung dibuat', !!storeId, storeId);
   const idxSheet = world.env.files.get(storeId).getSheetByName('IDX_RELATION');
   ok('sheet IDX_RELATION ada', !!idxSheet);
-  eq('baris index = jumlah key', idxSheet.getLastRow() - 1, Object.keys(idx1.map).length);
+  const idxRows = idxSheet.getRange(2, 1, idxSheet.getLastRow() - 1, 1).getDisplayValues()
+    .map(r => String(r[0])).filter(k => k && k.charAt(0) !== '~');
+  eq('baris index = jumlah key', idxRows.length, Object.keys(idx1.map).length);
+  ok('agregat histori Toko Bangkrut ikut dimaterialisasi',
+     idxSheet.getLastRow() - 1 > idxRows.length);
 
   const sandbox2 = loadScript(world.env, { dbId: DB_ID, dateNew: '2026-09-01' });
   sandbox2.RSC_DB_PARAMETERS.cacheMaxBytes = 10;

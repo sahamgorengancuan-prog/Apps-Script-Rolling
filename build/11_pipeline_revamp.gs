@@ -212,6 +212,28 @@ function RSC_RESET_TEMPLATE_REVAMP_JOB_20260722() {
 }
 
 /** Gate otomatis setelah bulk validation selesai. */
+/**
+ * PERF26 §16 — Auto Revamp untuk ACTIVE sheet.
+ * Hanya berjalan bila sheet yang divalidasi persis "Change Rolling & Change
+ * Schedule" DAN hasil validasinya nol error. Selain itu tidak melakukan apa pun.
+ */
+function RSC_PERF12_AUTO_REVAMP_ACTIVE_AFTER_VALIDATION_20260819_(ss, spec, res) {
+  var out = { ran: false, reason: '' };
+  try {
+    if (!spec || spec.key !== 'ROLLING') { out.reason = 'BUKAN_SHEET_ROLLING'; return out; }
+    if (!res || res.errorRows > 0) { out.reason = 'MASIH_ADA_ERROR'; return out; }
+    if (!res.rowCount) { out.reason = 'TIDAK_ADA_BARIS'; return out; }
+    var R = RSC_TEMPLATE_REVAMP_20260722;
+    if (R && R.autoAfterActiveValidation === false) { out.reason = 'DIMATIKAN_PARAMETER'; return out; }
+    out.result = rscRevampFile_(ss.getId(), null);
+    out.ran = true;
+    out.reason = 'OK';
+  } catch (e) {
+    out.reason = 'GAGAL: ' + rscClassify_(e).message;
+  }
+  return out;
+}
+
 function RSC_PERF12_PROCESS_PENDING_BULK_REVAMP_20260819() {
   var V = RSC_STANDARD_VALIDATION_V27_20260814;
   var ss = rscActiveSs_();
