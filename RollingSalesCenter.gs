@@ -127,7 +127,20 @@ var RSC_DB_PARAMETERS = {
 
   // Baris yang masa berlakunya sudah lewat lebih dari grace ini tidak diindeks.
   // Ini yang menjaga index tabel puluhan MB tetap ramping.
+  // CATATAN: filter ini TIDAK berlaku untuk deteksi pasangan Customer+Salesman
+  // (Change Schedule Only CASE 2) — pasangan tetap dianggap ada walau relasinya
+  // sudah lama ditutup, persis seperti versi lama yang membaca tabel mentah.
   activeGraceDays: 60,
+
+  // Batas record m_bp_relation yang disimpan per Customer. Versi lama membaca
+  // tabel mentah tanpa batas; 24 terlalu kecil untuk customer dengan banyak
+  // relationship + histori, dan menyebabkan CASE 1 / CASE 2 tidak terdeteksi.
+  relationMaxPerCustomer: 200,
+
+  // Batas pasangan Customer+Salesman tambahan (dari baris yang tidak masuk map
+  // karena kedaluwarsa atau melewati cap). Bila terlampaui, ditandai agar
+  // dilaporkan, bukan didiamkan.
+  relationPairExtraMax: 300000,
 
   readWindowRows: 20000,
   cacheTtlSec: 21600,
@@ -1200,6 +1213,7 @@ function rscIdxSheetName_(tableName) { return 'IDX_' + tableName; }
 // jadi prefix ini dijamin tidak pernah bentrok.
 var RSC_IDX_AUX_EARLIEST = '~E|';
 var RSC_IDX_AUX_CLOSED = '~C|';
+var RSC_IDX_AUX_PAIR = '~P|';
 
 function rscIdxSheetWrite_(tableName, ver, built) {
   var ss = rscIndexStore_(true);
@@ -1229,6 +1243,10 @@ function rscIdxSheetWrite_(tableName, ver, built) {
     var ck = Object.keys(built.closed);
     for (var c = 0; c < ck.length; c++) pairs.push([RSC_IDX_AUX_CLOSED + ck[c], built.closed[ck[c]]]);
   }
+  if (built.pairExtra) {
+    var pk2 = Object.keys(built.pairExtra);
+    for (var pz = 0; pz < pk2.length; pz++) pairs.push([RSC_IDX_AUX_PAIR + pk2[pz], 1]);
+  }
 
   var row = 2, i = 0, block = RSC_DB_PARAMETERS.indexSheetWriteRows;
   while (i < pairs.length) {
@@ -1252,7 +1270,7 @@ function rscIdxSheetRead_(tableName, ver) {
   try { meta = JSON.parse(head[1] || '{}'); } catch (e) { meta = {}; }
 
   var last = sh.getLastRow(), map = {}, row = 2;
-  var closed = {}, closedKeys = {}, earliest = {};
+  var closed = {}, closedKeys = {}, earliest = {}, pairExtra = {};
   var win = RSC_DB_PARAMETERS.indexSheetReadRows;
   while (row <= last) {
     var n = Math.min(win, last - row + 1);
@@ -1262,6 +1280,10 @@ function rscIdxSheetRead_(tableName, ver) {
       if (!key) continue;
       if (key.indexOf(RSC_IDX_AUX_EARLIEST) === 0) {
         earliest[key.substring(RSC_IDX_AUX_EARLIEST.length)] = rscText_(vals[r][1]);
+        continue;
+      }
+      if (key.indexOf(RSC_IDX_AUX_PAIR) === 0) {
+        pairExtra[key.substring(RSC_IDX_AUX_PAIR.length)] = 1;
         continue;
       }
       if (key.indexOf(RSC_IDX_AUX_CLOSED) === 0) {
@@ -1283,7 +1305,7 @@ function rscIdxSheetRead_(tableName, ver) {
     available: true, map: map, rows: meta.rows || 0, sheet: meta.sheet || '',
     source: meta.source || '', mode: meta.mode || '', storedIn: 'sheet',
     fields: meta.fields || null, fieldPresent: meta.fieldPresent || null,
-    closed: closed, closedKeys: closedKeys, earliest: earliest
+    closed: closed, closedKeys: closedKeys, earliest: earliest, pairExtra: pairExtra
   };
 }
 
@@ -1502,6 +1524,9 @@ function rscBuildRelationIndex_() {
   var cutoff = rscActiveCutoff_();
   var map = {}, total = 0, skipped = 0, expired = 0;
   var closed = {}, closedKeys = {}, earliest = {};
+  var pairExtra = {}, pairExtraCount = 0, pairTruncated = false;
+  var maxPerCustomer = RSC_DB_PARAMETERS.relationMaxPerCustomer || 200;
+  var pairExtraMax = RSC_DB_PARAMETERS.relationPairExtraMax || 300000;
   var openEnded = OPEN_ENDED_DATE_TEXT;
   var row = layout.firstDataRow, win = RSC_DB_PARAMETERS.readWindowRows;
 
@@ -1529,9 +1554,22 @@ function rscBuildRelationIndex_() {
         }
       }
 
+      // Pasangan Customer+Salesman dipakai untuk Change Schedule Only CASE 2.
+      // Versi lama mencarinya di tabel mentah, jadi baris kedaluwarsa maupun
+      // baris di luar cap TETAP dihitung. Yang tidak masuk map dicatat di sini.
+      var dropped = (rec.validTo && rec.validTo < cutoff) ||
+                    (map[rec.customer] && map[rec.customer].length >= maxPerCustomer);
+      if (dropped && rec.salesman) {
+        var pk = rec.customer + '|' + rec.salesman;
+        if (!pairExtra[pk]) {
+          if (pairExtraCount < pairExtraMax) { pairExtra[pk] = 1; pairExtraCount++; }
+          else pairTruncated = true;
+        }
+      }
+
       if (rec.validTo && rec.validTo < cutoff) { expired++; continue; }
       if (!map[rec.customer]) map[rec.customer] = [];
-      if (map[rec.customer].length < 24) {
+      if (map[rec.customer].length < maxPerCustomer) {
         map[rec.customer].push([rec.relationship, rec.salesman, rec.validFrom, rec.validTo]);
       }
       total++;
@@ -1541,6 +1579,8 @@ function rscBuildRelationIndex_() {
   return {
     available: true, map: map, rows: total, skippedRows: skipped, expiredRows: expired,
     closed: closed, closedKeys: closedKeys, earliest: earliest,
+    pairExtra: pairExtra, pairExtraCount: pairExtraCount, pairTruncated: pairTruncated,
+    maxPerCustomer: maxPerCustomer,
     sheet: sh.getName(), source: loc.ssName, sourceId: loc.ssId, mode: layout.mode,
     fields: ['Relationship', 'Salesman ID', 'Valid From', 'Valid To']
   };
@@ -2290,6 +2330,16 @@ function RSC_STD_LOAD_RELATION_CONTEXT_20260814_(snap) {
       if (!ctxOut.earliest[cust] || e < ctxOut.earliest[cust]) ctxOut.earliest[cust] = e;
     }
   }
+
+  // Pasangan yang hanya muncul pada baris kedaluwarsa / di luar cap index.
+  // Tanpa ini, baris "rubah jadwal" pada relasi lama salah dianggap bukan
+  // Change Schedule Only lalu dihujani R2/R4/R8a.
+  if (idx.pairExtra) {
+    var pe = Object.keys(idx.pairExtra);
+    for (var q = 0; q < pe.length; q++) ctxOut.pair[pe[q]] = true;
+    ctxOut.pairExtraUsed = pe.length;
+  }
+  ctxOut.pairTruncated = !!idx.pairTruncated;
   return ctxOut;
 }
 
@@ -2302,7 +2352,21 @@ function RSC_STD_LOAD_RELATION_CONTEXT_20260814_(snap) {
  */
 function RSC_STD_DETECT_CHANGE_SCHEDULE_ONLY_20260819_(snap, relCtx) {
   if (!relCtx || !relCtx.available) {
-    snap.skipped['CSO'] = 'master m_bp_relation tidak tersedia';
+    // Tanpa m_bp_relation kita TIDAK TAHU apakah baris ini Change Schedule Only.
+    // Sesuai PERF26 §19, kegagalan teknis tidak boleh mengubah OK/ERROR: baris
+    // yang berbentuk CASE 2 (Relationship kosong, Customer + Salesman terisi)
+    // diperlakukan sebagai belum-terverifikasi, bukan langsung error.
+    var unknown = 0;
+    for (var u = 0; u < snap.rows.length; u++) {
+      var ru = snap.rows[u], fu = ru.f;
+      if (!fu['Relationship'] && fu['Customer ID'] && fu['Salesman ID']) {
+        ru.csoUnknown = true;
+        unknown++;
+      }
+    }
+    snap.csoUnverifiedRows = unknown;
+    snap.skipped['CSO'] = 'master m_bp_relation tidak tersedia' +
+      (unknown ? ('; ' + unknown + ' baris berpola Change Schedule Only tidak dapat diverifikasi') : '');
     return;
   }
   for (var i = 0; i < snap.rows.length; i++) {
@@ -2492,7 +2556,9 @@ function RSC_V28_3_APPLY_ROLLING_MUTATIONS_20260814_(snap, relCtx, mvs) {
  * 7.8 BUSINESS RULES — S0, R1..R12, TB
  * ----------------------------------------------------------- */
 
-function rscRelOptional_(row) { return !!(row.cso && row.cso.mode === 'PAIR_NO_RELATION'); }
+function rscRelOptional_(row) {
+  return !!(row.csoUnknown || (row.cso && row.cso.mode === 'PAIR_NO_RELATION'));
+}
 function rscVisitOptional_(row) { return !!row.ssPair; }
 
 var RSC_ROW_RULES = {
@@ -2716,9 +2782,11 @@ var RSC_TABLE_RULES = {
       var row = snap.rows[i];
       if (rscVisitOptional_(row)) continue;
       var cid = row.f['Customer ID'], sid = row.f['Salesman ID'];
-      if (!cid || !sid) continue;
-      var key = cid + '|' + sid;
       var sch = row.f['Schedule Visit'] || '';
+      // Baris tanpa Schedule Visit tidak ikut dibandingkan; kekosongannya sudah
+      // dilaporkan R6 dan tidak boleh menjadi "varian" konflik R7.
+      if (!cid || !sid || !sch) continue;
+      var key = cid + '|' + sid;
       if (!groups[key]) groups[key] = { variants: {}, order: [] };
       if (!groups[key].variants[sch]) { groups[key].variants[sch] = []; groups[key].order.push(sch); }
       groups[key].variants[sch].push(row.sheetRow);
@@ -2751,6 +2819,7 @@ var RSC_TABLE_RULES = {
     var seen = {};
     for (var i = 0; i < snap.rows.length; i++) {
       if (snap.rows[i].cso && snap.rows[i].cso.yes) continue;   // Change Schedule Only dikecualikan
+      if (snap.rows[i].csoUnknown) continue;                    // status CSO belum dapat diverifikasi
       var parts = [];
       for (var k = 0; k < keyFields.length; k++) parts.push(snap.rows[i].f[keyFields[k]] || '');
       var key = parts.join('|');
@@ -2998,6 +3067,7 @@ function rscAssembleResult_(snap, timing) {
     ctx: snap, spec: snap.spec, rowCount: snap.rows.length, errorRows: errorRows,
     changeScheduleOnlyRows: csoRows, ssPairRows: ssRows, tokoBangkrutRows: tbRows,
     mutatedRows: snap.mutations || 0,
+    csoUnverifiedRows: snap.csoUnverifiedRows || 0,
     status: status, detail: detail, byCode: byCode, skipped: snap.skipped,
     timing: timing
   };
@@ -3734,7 +3804,7 @@ function rscProcessTask_(task, masters, onStage) {
 
   var sheets = child.getSheets();
   var processed = [], layoutProblems = [];
-  var totalRows = 0, totalErrors = 0, totalCso = 0;
+  var totalRows = 0, totalErrors = 0, totalCso = 0, totalUnverified = 0;
   var normSec = 0, rulesSec = 0, writeSec = 0;
 
   for (var s = 0; s < sheets.length; s++) {
@@ -3775,9 +3845,11 @@ function rscProcessTask_(task, masters, onStage) {
     totalRows += res.rowCount;
     totalErrors += res.errorRows;
     totalCso += res.changeScheduleOnlyRows;
+    totalUnverified += res.csoUnverifiedRows || 0;
     processed.push({
       sheet: sh.getName(), spec: spec.key, rows: res.rowCount, errorRows: res.errorRows,
-      changeScheduleOnly: res.changeScheduleOnlyRows, byCode: res.byCode, skipped: res.skipped
+      changeScheduleOnly: res.changeScheduleOnlyRows, csoUnverified: res.csoUnverifiedRows || 0,
+      byCode: res.byCode, skipped: res.skipped
     });
   }
 
@@ -3789,6 +3861,7 @@ function rscProcessTask_(task, masters, onStage) {
 
   return {
     fileName: fileName, rowCount: totalRows, errorRows: totalErrors, changeScheduleOnlyRows: totalCso,
+    csoUnverifiedRows: totalUnverified,
     processed: processed, layoutProblems: layoutProblems,
     summary: JSON.stringify({ sheets: processed, layout: layoutProblems }).substring(0, 45000),
     openSec: openSec, masterSec: 0,
@@ -4107,8 +4180,17 @@ function rscWriteBackRekapStatus_(ss, runId) {
     var rows;
     try { rows = JSON.parse(vals[i][RSC_M.MASTER_ROWS] || '[]'); } catch (e) { rows = []; }
     var st = vals[i][RSC_M.STATUS], txt;
-    if (st === RSC_STATUS.DONE_OK) txt = 'VALIDASI OK (0 error) — ' + rscStamp_();
-    else if (st === RSC_STATUS.DONE_ERRORS) txt = 'PERLU REVISI: ' + vals[i][RSC_M.ERROR_ROWS] + ' baris error.';
+    var unverified = 0;
+    try {
+      var sum = JSON.parse(vals[i][RSC_M.SHEET_SUMMARY] || '{}');
+      var shts = sum.sheets || [];
+      for (var u = 0; u < shts.length; u++) unverified += Number(shts[u].csoUnverified || 0);
+    } catch (eU) { unverified = 0; }
+    var warn = unverified
+      ? (' [' + unverified + ' baris Change Schedule Only belum terverifikasi: master m_bp_relation tidak terbaca]')
+      : '';
+    if (st === RSC_STATUS.DONE_OK) txt = 'VALIDASI OK (0 error) — ' + rscStamp_() + warn;
+    else if (st === RSC_STATUS.DONE_ERRORS) txt = 'PERLU REVISI: ' + vals[i][RSC_M.ERROR_ROWS] + ' baris error.' + warn;
     else if (st === RSC_STATUS.SKIPPED) txt = 'DILEWATI: ' + vals[i][RSC_M.MESSAGE];
     else if (st === RSC_STATUS.BLOCKED_INFRA) txt = 'TERTUNDA (infrastruktur): ' + vals[i][RSC_M.MESSAGE];
     else if (st === RSC_STATUS.HARD_ERROR) txt = 'GAGAL: ' + vals[i][RSC_M.SHEET_SUMMARY];
@@ -4185,6 +4267,10 @@ function RSC_STANDARD_VALIDATE_ACTIVE_SHEET_20260814() {
     'Baris     : ' + res.rowCount + '\n' +
     'Error     : ' + res.errorRows + '\n' +
     'Sched only: ' + res.changeScheduleOnlyRows + '\n' +
+    (res.csoUnverifiedRows
+      ? ('BELUM PASTI: ' + res.csoUnverifiedRows + ' baris berpola Change Schedule Only tidak dapat ' +
+         'diverifikasi karena master m_bp_relation tidak terbaca.\n')
+      : '') +
     'Dibetulkan: ' + res.mutatedRows + ' baris (auto-replace master/tanggal)\n' +
     (codes.length ? ('Rincian   : ' + codes.join(', ') + '\n') : '') +
     (auto.ran ? 'Auto Revamp: dijalankan karena 0 error.\n' : '') +
@@ -7179,9 +7265,58 @@ function RSC_RUN_SELF_TEST_20260819() {
  * 27. MENU
  * ============================================================= */
 
+/**
+ * Menu utama.
+ *
+ * PENTING: file .gs ini HARUS menjadi satu-satunya sumber. Bila file versi lama
+ * masih ada di project yang sama, Apps Script gagal meng-compile seluruh project
+ * karena identifier yang sama dideklarasikan dua kali
+ * (`const ROLLING_SALES_CENTER_PARAMETERS` di file lama vs `var` di file ini),
+ * dan akibatnya onOpen tidak pernah jalan sehingga MENU TIDAK MUNCUL sama sekali.
+ * Hapus file lama, jangan hanya menambahkan file baru.
+ */
 function onOpen(e) {
-  var ui;
-  try { ui = SpreadsheetApp.getUi(); } catch (err) { return; }
+  try {
+    RSC_BUILD_MENU_20260820_();
+  } catch (err) {
+    // Menu utama gagal dibangun: pasang menu darurat supaya user tetap punya
+    // jalan masuk, dan tampilkan penyebabnya.
+    try {
+      SpreadsheetApp.getUi()
+        .createMenu(ROLLING_SALES_CENTER_PARAMETERS.menuName + ' (DARURAT)')
+        .addItem('✅ Validate ACTIVE Sheet', 'RSC_STANDARD_VALIDATE_ACTIVE_SHEET_20260814')
+        .addItem('🚀 Validate ALL Links Kolom E', 'RSC_STANDARD_BULK_START_20260814')
+        .addItem('🩺 Diagnose DB Access / Identity', 'RSC_PERF11_DIAGNOSE_DB_ACCESS_20260819')
+        .addItem('❓ Kenapa menu tidak lengkap?', 'RSC_SHOW_MENU_BUILD_ERROR_20260820')
+        .addToUi();
+      rscSetProp_('RSC_MENU_BUILD_ERROR', String(err && err.message ? err.message : err));
+    } catch (e2) { /* tidak ada UI (dipanggil dari editor / trigger) */ }
+  }
+
+  runSafelyWithOptionalRethrow_('Copy-aware open automation', function () {
+    handleCopyAwareOpenAutomation_(e);
+  }, false);
+
+  runSafelyWithOptionalRethrow_('Simpan ID master', function () {
+    rscSetProp_(ROLLING_SALES_CENTER_PARAMETERS.propSsId, SpreadsheetApp.getActiveSpreadsheet().getId());
+  }, false);
+}
+
+/** Tampilkan penyebab menu gagal dibangun. */
+function RSC_SHOW_MENU_BUILD_ERROR_20260820() {
+  var msg = rscGetProp_('RSC_MENU_BUILD_ERROR', '(tidak ada catatan)');
+  return rscAlert_('Menu tidak lengkap',
+    'Penyebab terakhir:\n' + msg + '\n\n' +
+    'Penyebab paling sering: file .gs versi LAMA masih ada di project yang sama.\n' +
+    'Apps Script menggabungkan semua file .gs ke satu scope, sehingga\n' +
+    '`const ROLLING_SALES_CENTER_PARAMETERS` (file lama) bertabrakan dengan\n' +
+    '`var ROLLING_SALES_CENTER_PARAMETERS` (file ini) dan seluruh project gagal\n' +
+    'di-compile. Hapus file lama, sisakan satu file saja, lalu reload spreadsheet.');
+}
+
+/** Bangun menu lengkap. Dipisah supaya bisa dipanggil ulang dari editor. */
+function RSC_BUILD_MENU_20260820_() {
+  var ui = SpreadsheetApp.getUi();
 
   ui.createMenu(ROLLING_SALES_CENTER_PARAMETERS.menuName)
     .addItem('✅ 1. Validate ACTIVE Sheet — Standard V28', 'RSC_STANDARD_VALIDATE_ACTIVE_SHEET_20260814')
@@ -7306,12 +7441,5 @@ function onOpen(e) {
       .addItem('🧩 PERF22 Scope Completeness Audit', 'RSC_PERF22_SCOPE_AUDIT_20260819_')
       .addItem('🧹 Clear Fast DB Lookup Cache', 'RSC_PERF19_CLEAR_DB_CACHE_20260819'))
     .addToUi();
-
-  runSafelyWithOptionalRethrow_('Copy-aware open automation', function () {
-    handleCopyAwareOpenAutomation_(e);
-  }, false);
-
-  runSafelyWithOptionalRethrow_('Simpan ID master', function () {
-    rscSetProp_(ROLLING_SALES_CENTER_PARAMETERS.propSsId, SpreadsheetApp.getActiveSpreadsheet().getId());
-  }, false);
+  return true;
 }

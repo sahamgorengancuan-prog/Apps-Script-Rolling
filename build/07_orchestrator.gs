@@ -20,7 +20,7 @@ function rscProcessTask_(task, masters, onStage) {
 
   var sheets = child.getSheets();
   var processed = [], layoutProblems = [];
-  var totalRows = 0, totalErrors = 0, totalCso = 0;
+  var totalRows = 0, totalErrors = 0, totalCso = 0, totalUnverified = 0;
   var normSec = 0, rulesSec = 0, writeSec = 0;
 
   for (var s = 0; s < sheets.length; s++) {
@@ -61,9 +61,11 @@ function rscProcessTask_(task, masters, onStage) {
     totalRows += res.rowCount;
     totalErrors += res.errorRows;
     totalCso += res.changeScheduleOnlyRows;
+    totalUnverified += res.csoUnverifiedRows || 0;
     processed.push({
       sheet: sh.getName(), spec: spec.key, rows: res.rowCount, errorRows: res.errorRows,
-      changeScheduleOnly: res.changeScheduleOnlyRows, byCode: res.byCode, skipped: res.skipped
+      changeScheduleOnly: res.changeScheduleOnlyRows, csoUnverified: res.csoUnverifiedRows || 0,
+      byCode: res.byCode, skipped: res.skipped
     });
   }
 
@@ -75,6 +77,7 @@ function rscProcessTask_(task, masters, onStage) {
 
   return {
     fileName: fileName, rowCount: totalRows, errorRows: totalErrors, changeScheduleOnlyRows: totalCso,
+    csoUnverifiedRows: totalUnverified,
     processed: processed, layoutProblems: layoutProblems,
     summary: JSON.stringify({ sheets: processed, layout: layoutProblems }).substring(0, 45000),
     openSec: openSec, masterSec: 0,
@@ -393,8 +396,17 @@ function rscWriteBackRekapStatus_(ss, runId) {
     var rows;
     try { rows = JSON.parse(vals[i][RSC_M.MASTER_ROWS] || '[]'); } catch (e) { rows = []; }
     var st = vals[i][RSC_M.STATUS], txt;
-    if (st === RSC_STATUS.DONE_OK) txt = 'VALIDASI OK (0 error) — ' + rscStamp_();
-    else if (st === RSC_STATUS.DONE_ERRORS) txt = 'PERLU REVISI: ' + vals[i][RSC_M.ERROR_ROWS] + ' baris error.';
+    var unverified = 0;
+    try {
+      var sum = JSON.parse(vals[i][RSC_M.SHEET_SUMMARY] || '{}');
+      var shts = sum.sheets || [];
+      for (var u = 0; u < shts.length; u++) unverified += Number(shts[u].csoUnverified || 0);
+    } catch (eU) { unverified = 0; }
+    var warn = unverified
+      ? (' [' + unverified + ' baris Change Schedule Only belum terverifikasi: master m_bp_relation tidak terbaca]')
+      : '';
+    if (st === RSC_STATUS.DONE_OK) txt = 'VALIDASI OK (0 error) — ' + rscStamp_() + warn;
+    else if (st === RSC_STATUS.DONE_ERRORS) txt = 'PERLU REVISI: ' + vals[i][RSC_M.ERROR_ROWS] + ' baris error.' + warn;
     else if (st === RSC_STATUS.SKIPPED) txt = 'DILEWATI: ' + vals[i][RSC_M.MESSAGE];
     else if (st === RSC_STATUS.BLOCKED_INFRA) txt = 'TERTUNDA (infrastruktur): ' + vals[i][RSC_M.MESSAGE];
     else if (st === RSC_STATUS.HARD_ERROR) txt = 'GAGAL: ' + vals[i][RSC_M.SHEET_SUMMARY];

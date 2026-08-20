@@ -9,6 +9,36 @@ diganti adalah isi logic-nya.
 
 ---
 
+## 0. Pasang di Apps Script — HAPUS FILE LAMA
+
+`RollingSalesCenter.gs` harus menjadi **satu-satunya** file .gs di project.
+Apps Script menggabungkan seluruh file .gs ke satu scope, dan file versi lama
+mendeklarasikan 19 identifier yang sama dengan file ini sebagai `const`:
+
+```
+ROLLING_SALES_CENTER_PARAMETERS   TEMPLATE_UI_PARAMETERS
+VALIDATE_DATE_IN_TEMPLATE_PARAMETERS  RSC_STANDARD_VALIDATION_V27_20260814
+M_BP_RELATION_DB_PARAMETERS       COPY_AWARE_AUTOMATION_PARAMETERS
+CR_VISIT_SCHEDULE_SUMMARY_PARAMETERS  INPUT_ROLLING_LINK_VALIDATION_PARAMETERS
+EXACT_DATA_WITH_CURRENT_PARAMETERS    BACKGROUND_ROLLING_REASON_DATE_FIX_PARAMETERS
+RSC_TOKO_BANGKRUT_DB_DATE_PARAMETERS_20260622  RSC_PERF16_JOBLOG_20260819
+RSC_UR_20260721  RSC_V28_FULL_PIPELINE_20260814
+RELATIONSHIP_OPTIONS  SALES_TYPE_OPTIONS  VISIT_CATEGORY_OPTIONS
+VISIT_TYPE_OPTIONS    VISIT_DAYS
+```
+
+`const X` di file lama + `var X` di file ini = **SyntaxError untuk seluruh
+project**. Akibatnya `onOpen` tidak pernah dijalankan dan **menu tidak muncul
+sama sekali** — bukan menu lama, bukan menu baru, tidak ada.
+
+Langkahnya: buka Extensions → Apps Script → **hapus file .gs lama**, tempel
+`RollingSalesCenter.gs`, Save, lalu **reload spreadsheet**.
+
+Bila menu tetap tidak lengkap, akan muncul menu **(DARURAT)** berisi item
+`❓ Kenapa menu tidak lengkap?` yang menampilkan penyebabnya.
+
+---
+
 ## 1. Cara pakai
 
 1. Buka spreadsheet induk → **Extensions → Apps Script**.

@@ -496,9 +496,58 @@ function RSC_RUN_SELF_TEST_20260819() {
  * 27. MENU
  * ============================================================= */
 
+/**
+ * Menu utama.
+ *
+ * PENTING: file .gs ini HARUS menjadi satu-satunya sumber. Bila file versi lama
+ * masih ada di project yang sama, Apps Script gagal meng-compile seluruh project
+ * karena identifier yang sama dideklarasikan dua kali
+ * (`const ROLLING_SALES_CENTER_PARAMETERS` di file lama vs `var` di file ini),
+ * dan akibatnya onOpen tidak pernah jalan sehingga MENU TIDAK MUNCUL sama sekali.
+ * Hapus file lama, jangan hanya menambahkan file baru.
+ */
 function onOpen(e) {
-  var ui;
-  try { ui = SpreadsheetApp.getUi(); } catch (err) { return; }
+  try {
+    RSC_BUILD_MENU_20260820_();
+  } catch (err) {
+    // Menu utama gagal dibangun: pasang menu darurat supaya user tetap punya
+    // jalan masuk, dan tampilkan penyebabnya.
+    try {
+      SpreadsheetApp.getUi()
+        .createMenu(ROLLING_SALES_CENTER_PARAMETERS.menuName + ' (DARURAT)')
+        .addItem('✅ Validate ACTIVE Sheet', 'RSC_STANDARD_VALIDATE_ACTIVE_SHEET_20260814')
+        .addItem('🚀 Validate ALL Links Kolom E', 'RSC_STANDARD_BULK_START_20260814')
+        .addItem('🩺 Diagnose DB Access / Identity', 'RSC_PERF11_DIAGNOSE_DB_ACCESS_20260819')
+        .addItem('❓ Kenapa menu tidak lengkap?', 'RSC_SHOW_MENU_BUILD_ERROR_20260820')
+        .addToUi();
+      rscSetProp_('RSC_MENU_BUILD_ERROR', String(err && err.message ? err.message : err));
+    } catch (e2) { /* tidak ada UI (dipanggil dari editor / trigger) */ }
+  }
+
+  runSafelyWithOptionalRethrow_('Copy-aware open automation', function () {
+    handleCopyAwareOpenAutomation_(e);
+  }, false);
+
+  runSafelyWithOptionalRethrow_('Simpan ID master', function () {
+    rscSetProp_(ROLLING_SALES_CENTER_PARAMETERS.propSsId, SpreadsheetApp.getActiveSpreadsheet().getId());
+  }, false);
+}
+
+/** Tampilkan penyebab menu gagal dibangun. */
+function RSC_SHOW_MENU_BUILD_ERROR_20260820() {
+  var msg = rscGetProp_('RSC_MENU_BUILD_ERROR', '(tidak ada catatan)');
+  return rscAlert_('Menu tidak lengkap',
+    'Penyebab terakhir:\n' + msg + '\n\n' +
+    'Penyebab paling sering: file .gs versi LAMA masih ada di project yang sama.\n' +
+    'Apps Script menggabungkan semua file .gs ke satu scope, sehingga\n' +
+    '`const ROLLING_SALES_CENTER_PARAMETERS` (file lama) bertabrakan dengan\n' +
+    '`var ROLLING_SALES_CENTER_PARAMETERS` (file ini) dan seluruh project gagal\n' +
+    'di-compile. Hapus file lama, sisakan satu file saja, lalu reload spreadsheet.');
+}
+
+/** Bangun menu lengkap. Dipisah supaya bisa dipanggil ulang dari editor. */
+function RSC_BUILD_MENU_20260820_() {
+  var ui = SpreadsheetApp.getUi();
 
   ui.createMenu(ROLLING_SALES_CENTER_PARAMETERS.menuName)
     .addItem('✅ 1. Validate ACTIVE Sheet — Standard V28', 'RSC_STANDARD_VALIDATE_ACTIVE_SHEET_20260814')
@@ -623,12 +672,5 @@ function onOpen(e) {
       .addItem('🧩 PERF22 Scope Completeness Audit', 'RSC_PERF22_SCOPE_AUDIT_20260819_')
       .addItem('🧹 Clear Fast DB Lookup Cache', 'RSC_PERF19_CLEAR_DB_CACHE_20260819'))
     .addToUi();
-
-  runSafelyWithOptionalRethrow_('Copy-aware open automation', function () {
-    handleCopyAwareOpenAutomation_(e);
-  }, false);
-
-  runSafelyWithOptionalRethrow_('Simpan ID master', function () {
-    rscSetProp_(ROLLING_SALES_CENTER_PARAMETERS.propSsId, SpreadsheetApp.getActiveSpreadsheet().getId());
-  }, false);
+  return true;
 }

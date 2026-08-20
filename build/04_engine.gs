@@ -559,6 +559,16 @@ function RSC_STD_LOAD_RELATION_CONTEXT_20260814_(snap) {
       if (!ctxOut.earliest[cust] || e < ctxOut.earliest[cust]) ctxOut.earliest[cust] = e;
     }
   }
+
+  // Pasangan yang hanya muncul pada baris kedaluwarsa / di luar cap index.
+  // Tanpa ini, baris "rubah jadwal" pada relasi lama salah dianggap bukan
+  // Change Schedule Only lalu dihujani R2/R4/R8a.
+  if (idx.pairExtra) {
+    var pe = Object.keys(idx.pairExtra);
+    for (var q = 0; q < pe.length; q++) ctxOut.pair[pe[q]] = true;
+    ctxOut.pairExtraUsed = pe.length;
+  }
+  ctxOut.pairTruncated = !!idx.pairTruncated;
   return ctxOut;
 }
 
@@ -571,7 +581,21 @@ function RSC_STD_LOAD_RELATION_CONTEXT_20260814_(snap) {
  */
 function RSC_STD_DETECT_CHANGE_SCHEDULE_ONLY_20260819_(snap, relCtx) {
   if (!relCtx || !relCtx.available) {
-    snap.skipped['CSO'] = 'master m_bp_relation tidak tersedia';
+    // Tanpa m_bp_relation kita TIDAK TAHU apakah baris ini Change Schedule Only.
+    // Sesuai PERF26 §19, kegagalan teknis tidak boleh mengubah OK/ERROR: baris
+    // yang berbentuk CASE 2 (Relationship kosong, Customer + Salesman terisi)
+    // diperlakukan sebagai belum-terverifikasi, bukan langsung error.
+    var unknown = 0;
+    for (var u = 0; u < snap.rows.length; u++) {
+      var ru = snap.rows[u], fu = ru.f;
+      if (!fu['Relationship'] && fu['Customer ID'] && fu['Salesman ID']) {
+        ru.csoUnknown = true;
+        unknown++;
+      }
+    }
+    snap.csoUnverifiedRows = unknown;
+    snap.skipped['CSO'] = 'master m_bp_relation tidak tersedia' +
+      (unknown ? ('; ' + unknown + ' baris berpola Change Schedule Only tidak dapat diverifikasi') : '');
     return;
   }
   for (var i = 0; i < snap.rows.length; i++) {
@@ -761,7 +785,9 @@ function RSC_V28_3_APPLY_ROLLING_MUTATIONS_20260814_(snap, relCtx, mvs) {
  * 7.8 BUSINESS RULES — S0, R1..R12, TB
  * ----------------------------------------------------------- */
 
-function rscRelOptional_(row) { return !!(row.cso && row.cso.mode === 'PAIR_NO_RELATION'); }
+function rscRelOptional_(row) {
+  return !!(row.csoUnknown || (row.cso && row.cso.mode === 'PAIR_NO_RELATION'));
+}
 function rscVisitOptional_(row) { return !!row.ssPair; }
 
 var RSC_ROW_RULES = {
@@ -985,9 +1011,11 @@ var RSC_TABLE_RULES = {
       var row = snap.rows[i];
       if (rscVisitOptional_(row)) continue;
       var cid = row.f['Customer ID'], sid = row.f['Salesman ID'];
-      if (!cid || !sid) continue;
-      var key = cid + '|' + sid;
       var sch = row.f['Schedule Visit'] || '';
+      // Baris tanpa Schedule Visit tidak ikut dibandingkan; kekosongannya sudah
+      // dilaporkan R6 dan tidak boleh menjadi "varian" konflik R7.
+      if (!cid || !sid || !sch) continue;
+      var key = cid + '|' + sid;
       if (!groups[key]) groups[key] = { variants: {}, order: [] };
       if (!groups[key].variants[sch]) { groups[key].variants[sch] = []; groups[key].order.push(sch); }
       groups[key].variants[sch].push(row.sheetRow);
@@ -1020,6 +1048,7 @@ var RSC_TABLE_RULES = {
     var seen = {};
     for (var i = 0; i < snap.rows.length; i++) {
       if (snap.rows[i].cso && snap.rows[i].cso.yes) continue;   // Change Schedule Only dikecualikan
+      if (snap.rows[i].csoUnknown) continue;                    // status CSO belum dapat diverifikasi
       var parts = [];
       for (var k = 0; k < keyFields.length; k++) parts.push(snap.rows[i].f[keyFields[k]] || '');
       var key = parts.join('|');
@@ -1267,6 +1296,7 @@ function rscAssembleResult_(snap, timing) {
     ctx: snap, spec: snap.spec, rowCount: snap.rows.length, errorRows: errorRows,
     changeScheduleOnlyRows: csoRows, ssPairRows: ssRows, tokoBangkrutRows: tbRows,
     mutatedRows: snap.mutations || 0,
+    csoUnverifiedRows: snap.csoUnverifiedRows || 0,
     status: status, detail: detail, byCode: byCode, skipped: snap.skipped,
     timing: timing
   };

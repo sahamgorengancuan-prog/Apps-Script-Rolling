@@ -127,7 +127,20 @@ var RSC_DB_PARAMETERS = {
 
   // Baris yang masa berlakunya sudah lewat lebih dari grace ini tidak diindeks.
   // Ini yang menjaga index tabel puluhan MB tetap ramping.
+  // CATATAN: filter ini TIDAK berlaku untuk deteksi pasangan Customer+Salesman
+  // (Change Schedule Only CASE 2) — pasangan tetap dianggap ada walau relasinya
+  // sudah lama ditutup, persis seperti versi lama yang membaca tabel mentah.
   activeGraceDays: 60,
+
+  // Batas record m_bp_relation yang disimpan per Customer. Versi lama membaca
+  // tabel mentah tanpa batas; 24 terlalu kecil untuk customer dengan banyak
+  // relationship + histori, dan menyebabkan CASE 1 / CASE 2 tidak terdeteksi.
+  relationMaxPerCustomer: 200,
+
+  // Batas pasangan Customer+Salesman tambahan (dari baris yang tidak masuk map
+  // karena kedaluwarsa atau melewati cap). Bila terlampaui, ditandai agar
+  // dilaporkan, bukan didiamkan.
+  relationPairExtraMax: 300000,
 
   readWindowRows: 20000,
   cacheTtlSec: 21600,

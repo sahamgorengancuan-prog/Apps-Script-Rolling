@@ -75,6 +75,7 @@ function rscIdxSheetName_(tableName) { return 'IDX_' + tableName; }
 // jadi prefix ini dijamin tidak pernah bentrok.
 var RSC_IDX_AUX_EARLIEST = '~E|';
 var RSC_IDX_AUX_CLOSED = '~C|';
+var RSC_IDX_AUX_PAIR = '~P|';
 
 function rscIdxSheetWrite_(tableName, ver, built) {
   var ss = rscIndexStore_(true);
@@ -104,6 +105,10 @@ function rscIdxSheetWrite_(tableName, ver, built) {
     var ck = Object.keys(built.closed);
     for (var c = 0; c < ck.length; c++) pairs.push([RSC_IDX_AUX_CLOSED + ck[c], built.closed[ck[c]]]);
   }
+  if (built.pairExtra) {
+    var pk2 = Object.keys(built.pairExtra);
+    for (var pz = 0; pz < pk2.length; pz++) pairs.push([RSC_IDX_AUX_PAIR + pk2[pz], 1]);
+  }
 
   var row = 2, i = 0, block = RSC_DB_PARAMETERS.indexSheetWriteRows;
   while (i < pairs.length) {
@@ -127,7 +132,7 @@ function rscIdxSheetRead_(tableName, ver) {
   try { meta = JSON.parse(head[1] || '{}'); } catch (e) { meta = {}; }
 
   var last = sh.getLastRow(), map = {}, row = 2;
-  var closed = {}, closedKeys = {}, earliest = {};
+  var closed = {}, closedKeys = {}, earliest = {}, pairExtra = {};
   var win = RSC_DB_PARAMETERS.indexSheetReadRows;
   while (row <= last) {
     var n = Math.min(win, last - row + 1);
@@ -137,6 +142,10 @@ function rscIdxSheetRead_(tableName, ver) {
       if (!key) continue;
       if (key.indexOf(RSC_IDX_AUX_EARLIEST) === 0) {
         earliest[key.substring(RSC_IDX_AUX_EARLIEST.length)] = rscText_(vals[r][1]);
+        continue;
+      }
+      if (key.indexOf(RSC_IDX_AUX_PAIR) === 0) {
+        pairExtra[key.substring(RSC_IDX_AUX_PAIR.length)] = 1;
         continue;
       }
       if (key.indexOf(RSC_IDX_AUX_CLOSED) === 0) {
@@ -158,7 +167,7 @@ function rscIdxSheetRead_(tableName, ver) {
     available: true, map: map, rows: meta.rows || 0, sheet: meta.sheet || '',
     source: meta.source || '', mode: meta.mode || '', storedIn: 'sheet',
     fields: meta.fields || null, fieldPresent: meta.fieldPresent || null,
-    closed: closed, closedKeys: closedKeys, earliest: earliest
+    closed: closed, closedKeys: closedKeys, earliest: earliest, pairExtra: pairExtra
   };
 }
 
@@ -377,6 +386,9 @@ function rscBuildRelationIndex_() {
   var cutoff = rscActiveCutoff_();
   var map = {}, total = 0, skipped = 0, expired = 0;
   var closed = {}, closedKeys = {}, earliest = {};
+  var pairExtra = {}, pairExtraCount = 0, pairTruncated = false;
+  var maxPerCustomer = RSC_DB_PARAMETERS.relationMaxPerCustomer || 200;
+  var pairExtraMax = RSC_DB_PARAMETERS.relationPairExtraMax || 300000;
   var openEnded = OPEN_ENDED_DATE_TEXT;
   var row = layout.firstDataRow, win = RSC_DB_PARAMETERS.readWindowRows;
 
@@ -404,9 +416,22 @@ function rscBuildRelationIndex_() {
         }
       }
 
+      // Pasangan Customer+Salesman dipakai untuk Change Schedule Only CASE 2.
+      // Versi lama mencarinya di tabel mentah, jadi baris kedaluwarsa maupun
+      // baris di luar cap TETAP dihitung. Yang tidak masuk map dicatat di sini.
+      var dropped = (rec.validTo && rec.validTo < cutoff) ||
+                    (map[rec.customer] && map[rec.customer].length >= maxPerCustomer);
+      if (dropped && rec.salesman) {
+        var pk = rec.customer + '|' + rec.salesman;
+        if (!pairExtra[pk]) {
+          if (pairExtraCount < pairExtraMax) { pairExtra[pk] = 1; pairExtraCount++; }
+          else pairTruncated = true;
+        }
+      }
+
       if (rec.validTo && rec.validTo < cutoff) { expired++; continue; }
       if (!map[rec.customer]) map[rec.customer] = [];
-      if (map[rec.customer].length < 24) {
+      if (map[rec.customer].length < maxPerCustomer) {
         map[rec.customer].push([rec.relationship, rec.salesman, rec.validFrom, rec.validTo]);
       }
       total++;
@@ -416,6 +441,8 @@ function rscBuildRelationIndex_() {
   return {
     available: true, map: map, rows: total, skippedRows: skipped, expiredRows: expired,
     closed: closed, closedKeys: closedKeys, earliest: earliest,
+    pairExtra: pairExtra, pairExtraCount: pairExtraCount, pairTruncated: pairTruncated,
+    maxPerCustomer: maxPerCustomer,
     sheet: sh.getName(), source: loc.ssName, sourceId: loc.ssId, mode: layout.mode,
     fields: ['Relationship', 'Salesman ID', 'Valid From', 'Valid To']
   };

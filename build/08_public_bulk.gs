@@ -49,6 +49,10 @@ function RSC_STANDARD_VALIDATE_ACTIVE_SHEET_20260814() {
     'Baris     : ' + res.rowCount + '\n' +
     'Error     : ' + res.errorRows + '\n' +
     'Sched only: ' + res.changeScheduleOnlyRows + '\n' +
+    (res.csoUnverifiedRows
+      ? ('BELUM PASTI: ' + res.csoUnverifiedRows + ' baris berpola Change Schedule Only tidak dapat ' +
+         'diverifikasi karena master m_bp_relation tidak terbaca.\n')
+      : '') +
     'Dibetulkan: ' + res.mutatedRows + ' baris (auto-replace master/tanggal)\n' +
     (codes.length ? ('Rincian   : ' + codes.join(', ') + '\n') : '') +
     (auto.ran ? 'Auto Revamp: dijalankan karena 0 error.\n' : '') +

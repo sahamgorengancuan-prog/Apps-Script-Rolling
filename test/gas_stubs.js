@@ -25,6 +25,35 @@ function fakeDriveId() {
 
 function colLetter(n) { let s = ''; while (n > 0) { const m = (n - 1) % 26; s = String.fromCharCode(65 + m) + s; n = Math.floor((n - 1) / 26); } return s; }
 
+/** UI palsu: merekam menu yang dibangun onOpen. */
+class FakeMenu {
+  constructor(ui, name) { this.ui = ui; this.name = name; this.items = []; }
+  addItem(label, fn) { this.items.push({ label, fn }); return this; }
+  addSeparator() { this.items.push({ separator: true }); return this; }
+  addSubMenu(menu) { this.items.push({ submenu: menu }); return this; }
+  addToUi() { this.ui.menus.push(this); return this; }
+}
+
+class FakeUi {
+  constructor() { this.menus = []; this.alerts = []; }
+  createMenu(name) { return new FakeMenu(this, name); }
+  alert(a, b) { this.alerts.push([a, b]); return 'OK'; }
+  prompt() { return { getSelectedButton: () => 'CANCEL', getResponseText: () => '' }; }
+  showModalDialog() { return null; }
+  get ButtonSet() { return { OK: 'OK', OK_CANCEL: 'OK_CANCEL', YES_NO: 'YES_NO' }; }
+  get Button() { return { OK: 'OK', CANCEL: 'CANCEL', YES: 'YES', NO: 'NO' }; }
+  /** Semua nama function yang dirujuk menu, termasuk submenu. */
+  handlers() {
+    const out = [];
+    const walk = (m) => m.items.forEach(it => {
+      if (it.submenu) walk(it.submenu);
+      else if (it.fn) out.push(it.fn);
+    });
+    this.menus.forEach(walk);
+    return out;
+  }
+}
+
 class FakeRange {
   constructor(sheet, row, col, numRows, numCols) {
     this.sheet = sheet; this.row = row; this.col = col;
@@ -251,7 +280,10 @@ function buildGlobals(env) {
       env.addFile(ss);
       return ss;
     },
-    getUi() { throw new Error('No UI in headless context'); }
+    getUi() {
+      if (!env.ui) throw new Error('No UI in headless context');
+      return env.ui;
+    }
   };
 
   g.PropertiesService = {
@@ -359,4 +391,5 @@ function buildGlobals(env) {
   return g;
 }
 
-module.exports = { FakeSpreadsheet, FakeSheet, Environment, buildGlobals, METRICS, colLetter };
+module.exports = {
+  FakeUi, FakeSpreadsheet, FakeSheet, Environment, buildGlobals, METRICS, colLetter };

@@ -4,7 +4,7 @@
  * Setiap bagian dokumen "PERF26 Business Logic Validation (Detailed)"
  * diuji satu per satu terhadap engine di RollingSalesCenter.gs.
  */
-const { FakeSpreadsheet, METRICS } = require('./gas_stubs');
+const { FakeSpreadsheet, FakeUi, METRICS } = require('./gas_stubs');
 const { buildWorld, loadScript, drainTriggers, MANIFEST_SHEET } = require('./world');
 
 let PASS = 0; const FAIL = [];
@@ -706,6 +706,122 @@ section('L17. WARNA PADA MANIFEST, DASHBOARD, DAN REKAP (jalur bulk nyata)');
   eq('COMPLETE OK di dashboard berlatar hijau', jl.getRange(J.counterRow, 7).getBackground(), GREEN);
   eq('ERROR/HARD di dashboard berlatar merah', jl.getRange(J.counterRow, 11).getBackground(), RED);
   eq('ringkasan akhir ALL OK berlatar hijau', jl.getRange(J.summaryRow, 1).getBackground(), GREEN);
+}
+
+/* ===================================================================== */
+section('L18. REGRESI LAPANGAN — Change Schedule Only harus terdeteksi');
+{
+  // Baris nyata dari produksi: Relationship kosong, Valid From kosong,
+  // pasangan Customer+Salesman sudah ada di m_bp_relation. Ini "rubah jadwal",
+  // bukan error.
+  function field(relRows, opts) {
+    opts = opts || {};
+    const w = buildWorld({ dbPadding: 0 });
+    w.env.files.delete('DB_MASTER_ID');
+    w.env.setClock('2026-08-20T00:00:00Z');
+    const db = new FakeSpreadsheet('DBFIELD', 'DB', { isDb: true });
+    db.addSheet('m_bp_general_view', [['bp_id', 'sls_office', 'bp_type_id'],
+      ['110248479', '2AA0', 'ZD01'], ['110636280', '2AA0', 'ZD01'],
+      ['S091200418', '2AA0', 'ZD01'], ['S091200041', '2AA0', 'ZD01']]);
+    db.addSheet('m_sales_info', [['salesman_id', 'valid_from', 'valid_to'],
+      ['S091200418', '1772323200000', '253402214400000'],
+      ['S091200041', '1772323200000', '253402214400000']]);
+    db.addSheet('m_bp_relation',
+      [['https://docs.google.com/spreadsheets/d/DBFIELD/edit?gid=1']]
+        .concat(relRows.map(r => [JSON.stringify(r)])));
+    w.env.addFile(db);
+    const g = loadScript(w.env, { dbId: opts.noDb ? '' : 'DBFIELD', dateNew: DATE_NEW, dateClose: DATE_CLOSE });
+    return { w, g, spec: g.rscPrimarySpec_(), masters: g.rscLoadMasters_(w.master) };
+  }
+  const FIELD = (o) => {
+    const r = ['2AA0', '2AA0', '110248479', '', 'S091200418', 'ZD01', '', OPEN,
+      'F2', '03', 'W1M,W3M', DATE_NEW, OPEN, 'Rolling', '', ''];
+    Object.keys(o || {}).forEach(k => { r[k] = o[k]; });
+    return r;
+  };
+
+  // (a) relasi aktif
+  const a = field([['110248479', 'ZWS003', 'S091200418', '2026-01-01', OPEN]]);
+  const ra = a.g.rscValidateValues_(a.spec, [FIELD({}), FIELD({ 9: '04' })], a.masters);
+  eq('relasi aktif -> PAIR_NO_RELATION', ra.ctx.rows[0].cso.mode, 'PAIR_NO_RELATION');
+  eq('baris 1 bersih', ra.status[0] + '|' + ra.detail[0], 'OK|');
+  eq('baris 2 bersih (R8a tidak menyala)', ra.status[1] + '|' + ra.detail[1], 'OK|');
+
+  // (b) relasi sudah ditutup lebih dari grace 60 hari
+  const b = field([['110248479', 'ZWS003', 'S091200418', '2024-01-01', '2025-01-31']]);
+  const rb = b.g.rscValidateValues_(b.spec, [FIELD({})], b.masters);
+  eq('relasi lama tetap terhitung sebagai pasangan', rb.ctx.rows[0].cso.mode, 'PAIR_NO_RELATION');
+  eq('tidak ada error', rb.detail[0], '');
+
+  // (c) customer dengan relasi lebih banyak dari cap index
+  const many = [];
+  for (let i = 0; i < 250; i++) {
+    many.push(['110248479', 'ZWS0' + String((i % 9) + 1).padStart(2, '0'), 'S09999' + String(1000 + i), '2026-01-01', OPEN]);
+  }
+  many.push(['110248479', 'ZWS003', 'S091200418', '2026-01-01', OPEN]);
+  const c = field(many);
+  const rc = c.g.rscValidateValues_(c.spec, [FIELD({})], c.masters);
+  eq('pasangan di luar cap index tetap terdeteksi', rc.ctx.rows[0].cso.mode, 'PAIR_NO_RELATION');
+  eq('tidak ada error', rc.detail[0], '');
+
+  // (d) master m_bp_relation tidak terbaca -> status CSO tidak diketahui
+  const d = field([], { noDb: true });
+  const rd = d.g.rscValidateValues_(d.spec, [FIELD({}), FIELD({})], d.masters);
+  ok('baris ditandai belum terverifikasi', rd.ctx.rows[0].csoUnknown === true);
+  eq('jumlah baris belum terverifikasi dilaporkan', rd.csoUnverifiedRows, 2);
+  eq('tidak dijadikan error (PERF26 §19)', rd.status[0], 'OK');
+  eq('R8a juga tidak menyala', rd.detail[1], '');
+  ok('alasannya tercatat', /tidak dapat diverifikasi/.test(rd.skipped.CSO), rd.skipped.CSO);
+
+  // (e) Relationship kosong dan pasangan memang tidak ada -> tetap error
+  const e = field([['110636280', 'ZWS003', 'S091200041', '2026-01-01', OPEN]]);
+  const re = e.g.rscValidateValues_(e.spec, [FIELD({})], e.masters);
+  ok('pasangan tidak ada -> R2 tetap menyala', re.detail[0].indexOf('[R2]') >= 0, re.detail[0]);
+
+  // (f) R7 tidak menghitung baris tanpa Schedule Visit sebagai varian
+  const f = field([['110248479', 'ZWS003', 'S091200418', '2026-01-01', OPEN]]);
+  const rf = f.g.rscValidateValues_(f.spec, [FIELD({}), FIELD({ 10: '' })], f.masters);
+  hasNot('baris tanpa Schedule Visit tidak memicu R7', rf.detail[0], 'R7');
+  has('kekosongannya dilaporkan R6', rf.detail[1], 'R6');
+
+  // (g) dua Schedule Visit berbeda untuk Customer+Salesman yang sama TETAP R7
+  const g2 = field([['110636280', 'ZWS003', 'S091200041', '2026-01-01', OPEN]]);
+  const SS = (sch) => FIELD({ 2: '110636280', 4: 'S091200041', 10: sch,
+    8: sch.split(',').length === 4 ? 'F4' : 'F2' });
+  const rg = g2.g.rscValidateValues_(g2.spec,
+    [SS('W1T,W2T,W3T,W4T'), SS('W1T,W2T,W3T,W4T'), SS('W2T,W4T'), SS('W2T,W4T')], g2.masters);
+  eq('semua baris Change Schedule Only', rg.ctx.rows.filter(r => r.cso).length, 4);
+  hasNot('R8a tidak menyala', rg.detail[0], 'R8');
+  has('R7 tetap menyala untuk schedule yang berbeda', rg.detail[0], 'R7');
+  ok('R7 menyebut kedua varian dan row-nya',
+     /W1T,W2T,W3T,W4T \(row 2,3\) vs W2T,W4T \(row 4,5\)/.test(rg.detail[0]), rg.detail[0]);
+}
+
+/* ===================================================================== */
+section('L19. onOpen MEMBANGUN MENU');
+{
+  const w4 = buildWorld({});
+  w4.env.ui = new FakeUi();
+  const g4 = loadScript(w4.env, { dbId: w4.db.getId() });
+  g4.onOpen({});
+  eq('satu menu terpasang', w4.env.ui.menus.length, 1);
+  eq('nama menu', w4.env.ui.menus[0].name, g4.ROLLING_SALES_CENTER_PARAMETERS.menuName);
+  const handlers = w4.env.ui.handlers();
+  ok('menu berisi banyak item', handlers.length > 80, 'items=' + handlers.length);
+  const undef = handlers.filter(h => typeof g4[h] !== 'function');
+  eq('semua handler menu terdefinisi', undef.length, 0);
+  ok('item utama ada', handlers.indexOf('RSC_STANDARD_VALIDATE_ACTIVE_SHEET_20260814') >= 0);
+
+  // Bila pembangunan menu gagal, menu darurat tetap muncul.
+  const w5 = buildWorld({});
+  w5.env.ui = new FakeUi();
+  const g5 = loadScript(w5.env, { dbId: w5.db.getId() });
+  g5.RSC_BUILD_MENU_20260820_ = function () { throw new Error('simulasi gagal'); };
+  g5.onOpen({});
+  eq('menu darurat terpasang', w5.env.ui.menus.length, 1);
+  ok('ditandai DARURAT', /DARURAT/.test(w5.env.ui.menus[0].name), w5.env.ui.menus[0].name);
+  ok('menu darurat tetap punya validasi',
+     w5.env.ui.handlers().indexOf('RSC_STANDARD_VALIDATE_ACTIVE_SHEET_20260814') >= 0);
 }
 
 /* ===================================================================== */
